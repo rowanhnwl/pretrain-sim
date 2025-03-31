@@ -8,6 +8,9 @@ from rdkit import DataStructs
 
 import random
 from tqdm import tqdm
+import math
+import numpy as np
+from matplotlib import pyplot as plt
 
 PAD_TOKEN_ID = 266
 
@@ -21,6 +24,7 @@ class TanimotoDataset(Dataset):
         self.fpgen = AllChem.GetRDKitFPGenerator()
 
         self.pair_sim_data = self.build_pairs_list()
+        self.zero_mean_sim_scores()
 
     def __len__(self):
         return len(self.pair_sim_data)
@@ -44,10 +48,13 @@ class TanimotoDataset(Dataset):
 
                 new_len = len(pairs_set)
                 if new_len > old_len and sim_score is not None:
+
+                    adjusted_sim_score = sim_score
+
                     pairs_with_sim_list.append({
                         "smi1": self.tokenize_smiles(smi1),
                         "smi2": self.tokenize_smiles(smi2),
-                        "sim": sim_score
+                        "sim": adjusted_sim_score
                     })
                     pbar.update(1)
 
@@ -72,6 +79,30 @@ class TanimotoDataset(Dataset):
         tanimoto = DataStructs.TanimotoSimilarity(fp1, fp2)
 
         return tanimoto
+
+    def zero_mean_sim_scores(self):
+        sim_mean, sim_std = self.get_sim_stats()
+
+        for x in self.pair_sim_data:
+            x["sim"] = 2*(x["sim"] - sim_mean)
+
+    def adjust_sim_score_linear(self, sim):
+        return (2 * sim) - 1
+
+    def adjust_sim_score_cos(self, sim):
+        return -math.cos(math.pi * sim)
+    
+    def get_sim_stats(self):
+        sim_list = [x["sim"] for x in self.pair_sim_data]
+        sim_mean = np.mean(sim_list)
+        sim_std = np.std(sim_list)
+
+        return sim_mean, sim_std
+    
+    def sim_histogram(self):
+        sim_list = [x["sim"] for x in self.pair_sim_data]
+        plt.hist(sim_list, bins=100)
+        plt.savefig("hist.png")
     
 def collate_batch(batch):
     smi1_token_ids = []

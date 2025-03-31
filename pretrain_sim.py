@@ -26,6 +26,8 @@ def main():
         tokenizer=model.tokenizer
     )
 
+    pair_sim_dataset.sim_histogram()
+
     valid_size = int(valid_ratio * n_samples)
     train_size = n_samples - valid_size
 
