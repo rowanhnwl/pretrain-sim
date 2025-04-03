@@ -5,6 +5,8 @@ import csv
 from rdkit import Chem
 from rdkit.Chem.rdMolDescriptors import CalcTPSA
 
+import torch
+
 def calc_tpsa(smi):
     mol = Chem.MolFromSmiles(smi)
 
