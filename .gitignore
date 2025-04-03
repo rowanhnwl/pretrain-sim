@@ -174,4 +174,5 @@ cython_debug/
 .pypirc
 
 checkpoints
-zinc250k
+data
+nohup.out

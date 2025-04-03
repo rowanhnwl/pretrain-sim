@@ -5,25 +5,32 @@ from torch.nn.utils.rnn import pad_sequence
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit import DataStructs
+from rdkit.Chem import rdFingerprintGenerator
 
 import random
 from tqdm import tqdm
 import math
 import numpy as np
 from matplotlib import pyplot as plt
+from multiprocessing import Pool
+import os
+
+mfpgen = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
 
 PAD_TOKEN_ID = 266
 
 class TanimotoDataset(Dataset):
-    def __init__(self, master_smiles_list, n_samples, tokenizer, max_len=512):
+    def __init__(self, master_smiles_list, n_samples, tokenizer, max_len=512, sample_method="sparse"):
         self.master_smiles_list = master_smiles_list
         self.n_samples = n_samples
         self.tokenizer = tokenizer
         self.max_len = max_len
 
-        self.fpgen = AllChem.GetRDKitFPGenerator()
+        if sample_method == "sparse":
+            self.pair_sim_data = self.build_pairs_list()
+        else:
+            self.pair_sim_data = self.build_dense_pairs_list()
 
-        self.pair_sim_data = self.build_pairs_list()
         self.zero_mean_sim_scores()
 
     def __len__(self):
@@ -32,12 +39,13 @@ class TanimotoDataset(Dataset):
     def __getitem__(self, index):
         return self.pair_sim_data[index]
 
-    def build_pairs_list(self):
+    def build_pairs_list_single_proc(self, proc_samples):
+
         pairs_set = set()
         pairs_with_sim_list = []
 
-        with tqdm(total=self.n_samples, desc="Getting SMILES pairs") as pbar:
-            while len(pairs_set) < self.n_samples:
+        with tqdm(total=proc_samples, desc="Getting SMILES pairs") as pbar:
+            while len(pairs_set) < proc_samples:
                 old_len = len(pairs_set)
 
                 (smi1, smi2) = random.sample(self.master_smiles_list, 2)
@@ -49,19 +57,48 @@ class TanimotoDataset(Dataset):
                 new_len = len(pairs_set)
                 if new_len > old_len and sim_score is not None:
 
-                    adjusted_sim_score = sim_score
-
                     pairs_with_sim_list.append({
                         "smi1": self.tokenize_smiles(smi1),
                         "smi2": self.tokenize_smiles(smi2),
-                        "sim": adjusted_sim_score
+                        "sim": sim_score
                     })
                     pbar.update(1)
 
         return pairs_with_sim_list
 
+    def build_pairs_list(self):
+        with Pool(os.cpu_count()) as p:
+            samples_per_proc = self.n_samples // os.cpu_count()
+            proc_lists = p.map(self.build_pairs_list_single_proc, [samples_per_proc for _ in range(os.cpu_count())])
+
+        pairs_with_sims_master = sum(proc_lists, [])
+
+        return pairs_with_sims_master
+
+    def build_dense_pairs_list(self):
+        pairs_with_sim_list = []
+
+        sample_list = random.sample(self.master_smiles_list, self.n_samples)
+
+        total_iters = int(self.n_samples * (self.n_samples - 1) / 2)
+        with tqdm(total=total_iters, desc="Getting SMILES pairs") as pbar:
+            for i, smi1 in enumerate(sample_list):
+                for smi2 in sample_list[(i+1):]:
+                    sim_score = self.tanimoto_similarity(smi1, smi2)
+
+                    if sim_score is not None and len(smi1) <= self.max_len and len(smi2) <= self.max_len:
+                        pairs_with_sim_list.append({
+                            "smi1": self.tokenize_smiles(smi1),
+                            "smi2": self.tokenize_smiles(smi2),
+                            "sim": sim_score
+                        })
+                    
+                    pbar.update(1)
+
+        return pairs_with_sim_list
+
     def tokenize_smiles(self, smi):
-        tokenized = self.tokenizer(smi, return_tensors='pt')
+        tokenized = self.tokenizer(smi)
         del tokenized["token_type_ids"]
 
         return tokenized
@@ -72,9 +109,9 @@ class TanimotoDataset(Dataset):
             mol2 = Chem.MolFromSmiles(smi2)
         except:
             return None
-
-        fp1 = self.fpgen.GetFingerprint(mol1)
-        fp2 = self.fpgen.GetFingerprint(mol2)
+        
+        fp1 = mfpgen.GetFingerprint(mol1)
+        fp2 = mfpgen.GetFingerprint(mol2)
 
         tanimoto = DataStructs.TanimotoSimilarity(fp1, fp2)
 
@@ -84,7 +121,7 @@ class TanimotoDataset(Dataset):
         sim_mean, sim_std = self.get_sim_stats()
 
         for x in self.pair_sim_data:
-            x["sim"] = 2*(x["sim"] - sim_mean)
+            x["sim"] = 2 * (x["sim"] - sim_mean)
 
     def adjust_sim_score_linear(self, sim):
         return (2 * sim) - 1
@@ -118,10 +155,10 @@ def collate_batch(batch):
         smi2_data = pair_with_sim["smi2"]
         sim_score = pair_with_sim["sim"]
 
-        smi1_token_ids.append(smi1_data["input_ids"].squeeze(0))
-        smi1_attn_masks.append(smi1_data["attention_mask"].squeeze(0))
-        smi2_token_ids.append(smi2_data["input_ids"].squeeze(0))
-        smi2_attn_masks.append(smi2_data["attention_mask"].squeeze(0))
+        smi1_token_ids.append(torch.tensor(smi1_data["input_ids"]).squeeze(0))
+        smi1_attn_masks.append(torch.tensor(smi1_data["attention_mask"]).squeeze(0))
+        smi2_token_ids.append(torch.tensor(smi2_data["input_ids"]).squeeze(0))
+        smi2_attn_masks.append(torch.tensor(smi2_data["attention_mask"]).squeeze(0))
 
         sim_scores.append(sim_score)
 
