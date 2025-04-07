@@ -8,3 +8,6 @@ tqdm
 pandas
 rdkit
 scikit-learn
+lmdb
+datasets
+accelerate
