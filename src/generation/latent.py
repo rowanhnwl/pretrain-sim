@@ -162,7 +162,7 @@ def config_latent_hook(steering_vec, steering_strength):
 
 def add_latent_hooks(model, ref_target_means, cscores, steering_strength):
     for k, layer in enumerate(model.model.layers):
-        if cscores[k] >= 0.9:
+        if cscores[k] >= 0.0:
             ref_mean_k, target_mean_k = ref_target_means[k]
             steering_vec = (target_mean_k - ref_mean_k).to(device)
 

@@ -16,13 +16,13 @@ def main():
     ref = 40.0
     tolerance = 5.0
 
-    steering_strength = 0.1
+    steering_strength = 0.001
 
     with open(dataset_path, "r") as f:
         data_dict = json.load(f)
 
     model, tokenizer = load_causal_lm_and_tokenizer(
-        model_path="output/checkpoint-26565"
+        model_path="output/final"
     )
 
     refs, targets = split_property_dataset(data_dict, target, ref, tolerance)

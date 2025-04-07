@@ -6,8 +6,8 @@ from torch.utils.data import DataLoader, random_split
 import torch.optim as optim
 
 def main():
-    model_path = "checkpoints/5M-best"
-    ckpt_path = "checkpoints/5M-best-tpsa"
+    model_path = "ChemFM/ChemFM-1B"
+    ckpt_path = "checkpoints/tpsa"
 
     n_samples = 10000
     valid_ratio = 0.20

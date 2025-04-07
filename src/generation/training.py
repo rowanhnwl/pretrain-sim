@@ -1,6 +1,8 @@
 from transformers import DataCollatorForLanguageModeling
 from transformers import Trainer, TrainingArguments
 
+import os
+
 def train_causal_lm(
     model,
     tokenizer,
@@ -9,7 +11,8 @@ def train_causal_lm(
     ckpt_steps,
     epochs,
     batch_size,
-    output_dir="./output"
+    output_dir="./output",
+    lora=True
 ):
     training_args = TrainingArguments(
         output_dir=output_dir,
@@ -37,3 +40,7 @@ def train_causal_lm(
     )
 
     trainer.train()
+
+    if lora:
+        merged_model = model.merge_and_unload()
+        merged_model.save_pretrained(os.path.join(output_dir, "final"))

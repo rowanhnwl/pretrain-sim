@@ -1,46 +1,46 @@
 from transformers import AutoTokenizer, LlamaForCausalLM
-
 import torch
 
-from peft import get_peft_model, LoraConfig, TaskType
+from peft import get_peft_model, LoraConfig, TaskType, PeftModel
+
+import os
+import json
 
 device = ("cuda" if torch.cuda.is_available() else "cpu")
 
-def load_causal_lm_and_tokenizer(model_path, hf_path="ChemFM/ChemFM-1B"):
-    tokenizer = AutoTokenizer.from_pretrained(hf_path)
-
-    tokenizer.add_special_tokens({
-        'pad_token': '<pad>'
-    })
-    
-    model = LlamaForCausalLM.from_pretrained(model_path)
-
-    model.resize_token_embeddings(len(tokenizer))
-    model.config.pad_token_id = tokenizer.pad_token_id
-
-    return model.to(device), tokenizer
-
-def load_lora_causal_lm_and_tokenizer(model_path, hf_path="ChemFM/ChemFM-1B"):
+def load_causal_lm_and_tokenizer(model_path, hf_path="ChemFM/ChemFM-1B", train_lora=False):
     tokenizer = AutoTokenizer.from_pretrained(hf_path)
 
     tokenizer.add_special_tokens({
         'pad_token': '<pad>'
     })
 
-    lora_config = LoraConfig(
-        r=8,
-        lora_alpha=32,
-        lora_dropout=0.05,
-        bias="none",
-        task_type=TaskType.CAUSAL_LM
-    )
+    if train_lora:
+        lora_config = LoraConfig(
+            r=8,
+            lora_alpha=32,
+            lora_dropout=0.05,
+            bias="none",
+            task_type=TaskType.CAUSAL_LM
+        )
 
-    model = LlamaForCausalLM.from_pretrained(model_path)
+        model = LlamaForCausalLM.from_pretrained(model_path)
+        model.resize_token_embeddings(len(tokenizer))
+        model.config.pad_token_id = tokenizer.pad_token_id
+
+        model = get_peft_model(model, lora_config)
+
+        # Still need to train the full lm head
+        for name, param in model.named_parameters():
+            if "lm_head" in name:
+                param.requires_grad = True
+
+        model.print_trainable_parameters()
+    else:
+        model = LlamaForCausalLM.from_pretrained(model_path)
+
     model.resize_token_embeddings(len(tokenizer))
     model.config.pad_token_id = tokenizer.pad_token_id
-
-    model = get_peft_model(model, lora_config)
-    model.print_trainable_parameters()
 
     return model.to(device), tokenizer
 

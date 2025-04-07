@@ -4,20 +4,20 @@ from src.generation.training import *
 
 def main():
     model_path = "checkpoints/tpsa"
-    data_path = "data/training/train_data.lmdb"
     n = 100000
     valid_ratio = 0.15
-    ckpt_steps = 10000
-    epochs = 5
+    ckpt_steps = 5000
+    epochs = 1
     batch_size = 16
 
-    model, tokenizer = load_lora_causal_lm_and_tokenizer(
-        model_path=model_path
+    model, tokenizer = load_causal_lm_and_tokenizer(
+        model_path=model_path,
+        train_lora=True
     )
 
-    dataset = SMILESDataset(
-        filepath=data_path,
-        n=n
+    dataset = ZincSMILESDataset(
+        n=n,
+        tokenizer=tokenizer
     )
 
     train_dataset, valid_dataset = split_train_valid(
