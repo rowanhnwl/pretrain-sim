@@ -11,3 +11,4 @@ scikit-learn
 lmdb
 datasets
 accelerate
+peft

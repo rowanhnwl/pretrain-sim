@@ -160,17 +160,18 @@ def config_latent_hook(steering_vec, steering_strength):
     
     return latent_hook_k
 
-def add_latent_hooks(model, ref_target_means, steering_strength):
+def add_latent_hooks(model, ref_target_means, cscores, steering_strength):
     for k, layer in enumerate(model.model.layers):
-        ref_mean_k, target_mean_k = ref_target_means[k]
-        steering_vec = (target_mean_k - ref_mean_k).to(device)
+        if cscores[k] >= 0.9:
+            ref_mean_k, target_mean_k = ref_target_means[k]
+            steering_vec = (target_mean_k - ref_mean_k).to(device)
 
-        hook_for_layer_k = config_latent_hook(steering_vec, steering_strength)
+            hook_for_layer_k = config_latent_hook(steering_vec, steering_strength)
 
-        layer.register_forward_hook(hook_for_layer_k)
+            layer.register_forward_hook(hook_for_layer_k)
 
 def add_model_steering(targets, refs, steering_strength, model, tokenizer):
-    ref_target_means, _ = all_layer_cluster_means(
+    ref_target_means, cscores = all_layer_cluster_means(
         targets,
         refs,
         model,
@@ -180,6 +181,7 @@ def add_model_steering(targets, refs, steering_strength, model, tokenizer):
     add_latent_hooks(
         model,
         ref_target_means,
+        cscores,
         steering_strength
     )
 

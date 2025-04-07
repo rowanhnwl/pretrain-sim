@@ -1,7 +1,7 @@
 from src.generation.latent import *
 from src.generation.causal import *
 from src.utils import split_property_dataset
-from src.sim_pretraining.chemfm import LlamaForSimPred
+
 from src.prop_pretraining.chemfm import LlamaForPropPred
 
 import torch
@@ -22,7 +22,7 @@ def main():
         data_dict = json.load(f)
 
     model, tokenizer = load_causal_lm_and_tokenizer(
-        model_path="output/checkpoint-1330"
+        model_path="output/checkpoint-26565"
     )
 
     refs, targets = split_property_dataset(data_dict, target, ref, tolerance)
@@ -31,7 +31,7 @@ def main():
     add_model_steering(targets, refs, steering_strength, model, tokenizer)
 
     smiles = generate_smiles(
-        "CC",
+        "C",
         100,
         model,
         tokenizer,

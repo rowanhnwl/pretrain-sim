@@ -5,13 +5,13 @@ from src.generation.training import *
 def main():
     model_path = "checkpoints/tpsa"
     data_path = "data/training/train_data.lmdb"
-    n = 5000
+    n = 100000
     valid_ratio = 0.15
-    ckpt_steps = 2500
+    ckpt_steps = 10000
     epochs = 5
     batch_size = 16
 
-    model, tokenizer = load_causal_lm_and_tokenizer(
+    model, tokenizer = load_lora_causal_lm_and_tokenizer(
         model_path=model_path
     )
 
