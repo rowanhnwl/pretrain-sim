@@ -12,3 +12,4 @@ lmdb
 datasets
 accelerate
 peft
+seaborn

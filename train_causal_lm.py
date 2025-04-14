@@ -2,9 +2,11 @@ from src.generation.causal import *
 from src.generation.data import *
 from src.generation.training import *
 
+from src.utils import split_train_valid
+
 def main():
     model_path = "checkpoints/tpsa"
-    n = 100000
+    n = 250000
     valid_ratio = 0.15
     ckpt_steps = 5000
     epochs = 1

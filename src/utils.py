@@ -5,6 +5,8 @@ import csv
 from rdkit import Chem
 from rdkit.Chem.rdMolDescriptors import CalcTPSA
 
+from datasets import Dataset
+
 import torch
 
 def calc_tpsa(smi):
@@ -57,12 +59,9 @@ def load_zinc250k(path="data/zinc250k", prop=None):
 
     return smiles
 
-def split_property_dataset(data_dict, target, ref, tolerance):
-    min_target_val = target - tolerance
-    max_target_val = target + tolerance
-
-    min_ref_val = ref - tolerance
-    max_ref_val = ref + tolerance
+def split_property_dataset(data_dict, t_range, r_range):
+    min_target_val, max_target_val = t_range
+    min_ref_val, max_ref_val = r_range
 
     refs = []
     targets = []
@@ -74,3 +73,14 @@ def split_property_dataset(data_dict, target, ref, tolerance):
             refs.append(smi)
 
     return refs, targets
+
+def split_train_valid(dataset, valid_ratio):
+    tokenized_dataset_list = dataset.data
+
+    dataset = Dataset.from_list(tokenized_dataset_list)
+    dataset_split = dataset.train_test_split(test_size=valid_ratio)
+
+    train_dataset = dataset_split["train"]
+    valid_dataset = dataset_split["test"]
+
+    return train_dataset, valid_dataset

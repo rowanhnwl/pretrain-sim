@@ -1,12 +1,11 @@
 from tqdm import tqdm
 import csv
 
-from torch.utils.data import Dataset as TDataset
-from datasets import Dataset as DDataset
+from torch.utils.data import Dataset
 
 EOS_TOKEN_ID = 265
 
-class ZincSMILESDataset(TDataset):
+class ZincSMILESDataset(Dataset):
     def __init__(self, n, tokenizer, path="data/zinc250k/250k_rndm_zinc_drugs_clean_3.csv", max_len=512):
         self.filepath = path
         self.n = n
@@ -43,14 +42,3 @@ class ZincSMILESDataset(TDataset):
 
                     if len(self.data) == self.n:
                         break
-
-def split_train_valid(dataset, valid_ratio):
-    tokenized_dataset_list = dataset.data
-
-    dataset = DDataset.from_list(tokenized_dataset_list)
-    dataset_split = dataset.train_test_split(test_size=valid_ratio)
-
-    train_dataset = dataset_split["train"]
-    valid_dataset = dataset_split["test"]
-
-    return train_dataset, valid_dataset

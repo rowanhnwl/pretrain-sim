@@ -1,4 +1,6 @@
 import torch
+import torch.nn.functional as F
+
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 import os
@@ -7,21 +9,34 @@ import json
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
+from copy import deepcopy
+import math
+import random
+
 device = ("cuda" if torch.cuda.is_available() else "cpu")
 
-def get_final_hidden_state(smiles, model, tokenizer):
-    tokenized_smiles = tokenizer(smiles, return_tensors="pt").to(device)
-    del tokenized_smiles["token_type_ids"]
+EOS_TOKEN_ID = 265
 
-    with torch.no_grad():
-        fwd = model.model(**tokenized_smiles)
-    
-    h = fwd.last_hidden_state[:, -1, :]
-    return h
+def cat_for_eos(tokenized):
+    tokenized["input_ids"] = torch.cat(
+        (
+            tokenized["input_ids"],
+            torch.tensor([[EOS_TOKEN_ID]], dtype=torch.long, device=device)
+        ),
+        dim=1
+    )
+    tokenized["attention_mask"] = torch.cat(
+        (
+            tokenized["attention_mask"],
+            torch.tensor([[1]], dtype=torch.long, device=device)
+        ),
+        dim=1
+    )
 
 def get_all_hidden_states(smiles, model, tokenizer):
     smiles_tokenized = tokenizer(smiles, return_tensors="pt").to(device)
     del smiles_tokenized["token_type_ids"]
+    cat_for_eos(smiles_tokenized)
 
     with torch.no_grad():
         fwd_pass = model.model(**smiles_tokenized, output_hidden_states=True)
@@ -150,27 +165,124 @@ def cluster_score(target_cluster_id, cluster_dict):
 
     return score
 
-def config_latent_hook(steering_vec, steering_strength):
+def get_adapted_lambda(h_icv, hidden_states_k, lam):
+    h_icv_expanded = h_icv.squeeze(1).view(1, 1, -1)
+    cos_sim_mat = F.cosine_similarity(hidden_states_k, -h_icv_expanded, dim=-1)
+
+    cos_sim_clamped = torch.clamp(cos_sim_mat, min=0.0)
+
+    adapted_lambdas = lam * (1 + cos_sim_clamped)
+
+    return adapted_lambdas
+
+def save_ax_as_png(ax, filename):
+    # Create new figure and copy the Axes into it
+    fig = plt.figure()
+    new_ax = fig.add_subplot(111)
+
+    # Copy scatter plots (collections)
+    for col in ax.collections:
+        offsets = col.get_offsets()
+        facecolors = col.get_facecolors()
+        sizes = col.get_sizes()
+        if len(offsets) > 0:
+            new_ax.scatter(
+                offsets[:, 0], offsets[:, 1],
+                c=facecolors if len(facecolors) > 0 else None,
+                s=sizes if len(sizes) > 0 else None,
+                label=col.get_label()
+            )
+
+    # Save and clean up
+    fig.savefig(filename)
+    plt.close(fig)
+
+def config_latent_hook(steering_vec, steering_strength, k, plt_obj=None, layer_k_mean=None, pcs=None):
     def latent_hook_k(module, input, output):
         hidden_states_k = output[0]
+        
+        adapted_lambdas = get_adapted_lambda(steering_vec, hidden_states_k, steering_strength)
+        new_hidden_states_k = torch.add(steering_vec.view(1, 1, -1) * adapted_lambdas.unsqueeze(-1), hidden_states_k)
 
-        hidden_states_k = torch.add(hidden_states_k, steering_vec * steering_strength)
+        norm = torch.norm(hidden_states_k, p=2, dim=2, keepdim=True)
+        new_norm = torch.norm(new_hidden_states_k, p=2, dim=2, keepdim=True)
+
+        hidden_states_k = torch.mul(new_hidden_states_k, (norm / new_norm))
+
+        last_hidden_state_k = hidden_states_k[:, -1, :]
+
+        # t = hidden_states_k.shape[1]
+
+        # lhs_k_proj = down_proj_single_h(last_hidden_state_k.to("cpu"), layer_k_mean, pcs)
+
+        # plt_obj.scatter(lhs_k_proj[:, :, 0], lhs_k_proj[:, :, 1], color='r')
+        
+        # save_ax_as_png(plt_obj, f"layer_plots/layer_{k}_token_{t}.png")
 
         return (hidden_states_k,)
     
     return latent_hook_k
 
-def add_latent_hooks(model, ref_target_means, cscores, steering_strength):
+def add_latent_hooks(model, rep_dict, steering_strength, pcs_list, ax):
     for k, layer in enumerate(model.model.layers):
-        if cscores[k] >= 0.0:
-            ref_mean_k, target_mean_k = ref_target_means[k]
-            steering_vec = (target_mean_k - ref_mean_k).to(device)
+        h_icv = unpaired_h_icv(rep_dict, k).to(device)
+        pcs_k, lkm = pcs_list[k]
+        hook_for_layer_k = config_latent_hook(h_icv, steering_strength, k, ax[k], lkm, pcs_k)
 
-            hook_for_layer_k = config_latent_hook(steering_vec, steering_strength)
+        layer.register_forward_hook(hook_for_layer_k)
 
-            layer.register_forward_hook(hook_for_layer_k)
+def add_latent_hooks_by_mean(model, ref_target_means, cscores, steering_strength, pcs_list, ax):
+    for k, layer in enumerate(model.model.layers):
+        ref_mean_k, target_mean_k = ref_target_means[k]
+        h_icv = (target_mean_k - ref_mean_k).to(device)
+        pcs_k, lkm = pcs_list[k]
+        hook_for_layer_k = config_latent_hook(h_icv, steering_strength, k, ax[k], lkm, pcs_k)
 
-def add_model_steering(targets, refs, steering_strength, model, tokenizer):
+        layer.register_forward_hook(hook_for_layer_k)
+
+def get_P_y(h_y_dot, h_x_sum):
+
+    P_y = h_y_dot / (h_y_dot + h_x_sum)
+
+    return P_y
+
+def get_P_x(h_y_dot, h_x_dot, h_x_sum):
+
+    P_x = h_x_dot / (h_y_dot + h_x_sum)
+
+    return P_x
+
+def unpaired_h_icv(rep_dict, k):
+    target_reps = rep_dict[k]["targets"]
+    ref_reps = rep_dict[k]["refs"]
+
+    exp_ref_dot_list = []
+    good_ref_reps = []
+    for h_x in ref_reps:
+        try:
+            exp_h_x_dot = math.exp(torch.dot(h_x.squeeze(0), h_x.squeeze(0)))
+            exp_ref_dot_list.append(exp_h_x_dot)
+            good_ref_reps.append(h_x)
+        except:
+            continue
+
+    exp_target_dot_list = []
+    for h_y in target_reps:
+        exp_target_dot = math.exp(torch.dot(h_y.squeeze(0), h_y.squeeze(0)))
+        exp_target_dot_list.append(exp_target_dot)
+
+    ref_sum = sum(exp_ref_dot_list)
+
+    h_icv = sum([
+        (1.0 - get_P_y(t_rep_dot, ref_sum)) * t_rep - sum([
+            get_P_x(t_rep_dot, r_rep_dot, ref_sum) * r_rep for r_rep, r_rep_dot in zip(good_ref_reps, exp_ref_dot_list)
+        ])
+        for t_rep, t_rep_dot in zip(target_reps, exp_target_dot_list)
+    ])
+
+    return h_icv
+
+def add_model_steering(targets, refs, steering_strength, model, tokenizer, pcs_list, ax):
     ref_target_means, cscores = all_layer_cluster_means(
         targets,
         refs,
@@ -178,12 +290,24 @@ def add_model_steering(targets, refs, steering_strength, model, tokenizer):
         tokenizer
     )
 
-    add_latent_hooks(
+    add_latent_hooks_by_mean(
         model,
         ref_target_means,
         cscores,
-        steering_strength
+        steering_strength,
+        pcs_list,
+        ax
     )
+
+    # rep_dict = get_representation_dict(targets, refs, model, tokenizer)
+
+    # add_latent_hooks(
+    #     model,
+    #     rep_dict,
+    #     steering_strength,
+    #     pcs_list,
+    #     ax
+    # )
 
 # PCA FUNCTIONS FOR PLOTTING
 def pca(layer_k_data_list, N):
@@ -208,6 +332,11 @@ def down_proj(layer_k_set_list, pcs):
 
     proj = torch.matmul((layer_k_mat - layer_k_mean), pcs.T)
 
+    return proj, layer_k_mean
+
+def down_proj_single_h(h, layer_k_mean, pcs):
+    proj = torch.matmul((h - layer_k_mean), pcs.T)
+
     return proj
 
 def view_refs_targets_2d(layer_k_ref_list, layer_k_target_list, layer, save_path="clusters"):
@@ -220,3 +349,50 @@ def view_refs_targets_2d(layer_k_ref_list, layer_k_target_list, layer, save_path
     plt.scatter(targets_proj[:, 0], targets_proj[:, 1], color='r')
     plt.savefig(f"{save_path}/layer_{layer}_clusters.png")
     plt.cla()
+
+def get_full_representation_dict(smiles, model, tokenizer):
+    rep_dict = {
+        k: [] for k in range(len(model.model.layers))
+    }
+
+    for smi in tqdm(smiles, desc="Getting target states"):
+        all_hidden_states = get_all_hidden_states(smi, model, tokenizer)
+        
+        for i, hs in enumerate(all_hidden_states):
+            rep_dict[i].append(hs)
+
+    return rep_dict
+
+def view_all_2d(layer_k_list, layer, prop_vals, ax, save_path="clusters"):
+    _, pcs = pca(layer_k_list, 2)
+
+    proj, lkm = down_proj(layer_k_list, pcs)
+    proj = proj.squeeze(1).to("cpu")
+
+    ax.scatter(proj[:, 0], proj[:, 1], c=prop_vals, cmap='viridis', vmin=min(prop_vals), vmax=max(prop_vals))
+
+    return (pcs, lkm)
+
+def full_dataset_layers(smiles, prop_vals, model, tokenizer, ax):
+    rep_dict = get_full_representation_dict(smiles, model, tokenizer)
+
+    pcs_list = []
+
+    for k in range(len(model.model.layers)):
+        pcs_list.append(view_all_2d(rep_dict[k], k, prop_vals, ax[k]))
+
+    return pcs_list
+
+# Property value based approach
+def icv_prop_grad(h, h_list, alpha):
+
+    
+
+def h_prop_pred(h, h_list, sample_rate=0.2):
+
+    n_sample = int(len(h_list) * sample_rate)
+    h_samples = random.sample(h_list, n_sample)
+
+    h_mat = torch.stack(h_samples)
+    
+    dist_mat = h_mat - h

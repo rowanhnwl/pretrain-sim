@@ -20,17 +20,17 @@ def main():
 
     model = LlamaForMultiPropPred(model_path=model_path)
 
-    pair_sim_dataset = PropDataset(
+    dataset = PropDataset(
         master_data_list=zinc250k_smiles,
         n_samples=n_samples,
         tokenizer=model.tokenizer,
         n_props=3
     )
 
-    valid_size = int(valid_ratio * len(pair_sim_dataset))
-    train_size = len(pair_sim_dataset) - valid_size
+    valid_size = int(valid_ratio * len(dataset))
+    train_size = len(dataset) - valid_size
 
-    train_dataset, valid_dataset = random_split(pair_sim_dataset, [train_size, valid_size])
+    train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch)
     valid_dataloader = DataLoader(valid_dataset, batch_size=batch_size, collate_fn=collate_batch)
 

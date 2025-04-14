@@ -1,4 +1,4 @@
-from transformers import AutoTokenizer, LlamaForCausalLM
+from transformers import AutoTokenizer, LlamaForCausalLM, LlamaModel
 import torch
 
 from peft import get_peft_model, LoraConfig, TaskType, PeftModel
@@ -17,9 +17,8 @@ def load_causal_lm_and_tokenizer(model_path, hf_path="ChemFM/ChemFM-1B", train_l
 
     if train_lora:
         lora_config = LoraConfig(
-            r=8,
+            r=4,
             lora_alpha=32,
-            lora_dropout=0.05,
             bias="none",
             task_type=TaskType.CAUSAL_LM
         )
@@ -65,7 +64,8 @@ def generate_smiles(input, n_samples, model, tokenizer, max_len=256):
             temperature=0.7,
             num_return_sequences=n_samples,
             eos_token_id=tokenizer.eos_token_id,
-            max_length=max_len
+            max_length=max_len,
+            use_cache=False
         )
 
     outputs_list = []
