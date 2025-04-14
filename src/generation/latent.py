@@ -12,6 +12,7 @@ from sklearn.preprocessing import StandardScaler
 from copy import deepcopy
 import math
 import random
+from heapq import nsmallest
 
 device = ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -384,15 +385,34 @@ def full_dataset_layers(smiles, prop_vals, model, tokenizer, ax):
     return pcs_list
 
 # Property value based approach
-def icv_prop_grad(h, h_list, alpha):
-
+def icv_prop_grad(h, h_list, prop_list, alpha, p_d, sample_rate=0.2):
+    p_hat = h_prop_pred(h, h_list, prop_list, sample_rate)
+    p_dt = alpha * p_d + (1 - alpha) * p_hat
     
+    samples = list(zip(h_list, prop_list))
 
-def h_prop_pred(h, h_list, sample_rate=0.2):
+    ref_samples = nsmallest(int(len(samples) * sample_rate), samples, key=lambda x: abs(x[1] - p_dt))
+    S_dt = torch.stack([s[0] for s in ref_samples])
+
+    diff_mat = S_dt - h
+
+    h_icv = (alpha / len(ref_samples)) * torch.sum(diff_mat)
+
+    print(h_icv)
+
+def h_prop_pred(h, h_list, prop_list, sample_rate=0.2):
 
     n_sample = int(len(h_list) * sample_rate)
-    h_samples = random.sample(h_list, n_sample)
+    samples = random.sample(list(zip(h_list, prop_list)), n_sample)
+
+    h_samples = [s[0] for s in samples]
+    p_samples = torch.tensor([s[1] for s in samples])
 
     h_mat = torch.stack(h_samples)
     
-    dist_mat = h_mat - h
+    dist_mat = torch.norm(h_mat - h, p=2)
+    dist_sum = torch.sum(dist_mat)
+
+    p_hat = (1 / dist_sum) * torch.sum(p_samples / dist_mat)
+
+    return p_hat
