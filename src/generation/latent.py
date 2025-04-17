@@ -51,120 +51,27 @@ def get_all_hidden_states(smiles, model, tokenizer):
 
     return final_hidden_states_list
 
-def get_representation_dict(targets, refs, model, tokenizer): # CHANGE TO INCORPORATE LAYERS
+def get_representation_dict(smiles, model, tokenizer): # CHANGE TO INCORPORATE LAYERS
     rep_dict = {
-        k: {
-            "targets": [],
-            "refs": []
-        } for k in range(len(model.model.layers))
+        k: {} for k in range(len(model.model.layers))
     }
 
-    for t in tqdm(targets, desc="Getting target states"):
+    for t in tqdm(smiles, desc="Getting states"):
         all_hidden_states = get_all_hidden_states(t, model, tokenizer)
         
         for i, hs in enumerate(all_hidden_states):
-            rep_dict[i]["targets"].append(hs)
-
-    for r in tqdm(refs, desc="Getting reference states"):
-        all_hidden_states = get_all_hidden_states(r, model, tokenizer)
-        
-        for i, hs in enumerate(all_hidden_states):
-            rep_dict[i]["refs"].append(hs)
+            rep_dict[i][t] = hs
 
     return rep_dict
 
-def all_layer_cluster_means(targets, refs, model, tokenizer, save_path="clusters", plot=False):
-    kmeans_model = KMeans(n_clusters=2, random_state=42)
-    hidden_states_dict = get_representation_dict(targets, refs, model, tokenizer)
+def sort_rep_dict(rep_dict, prop_list):
+    for k in rep_dict.keys():
+        pair_list = list(zip(rep_dict[k], prop_list))
+        sorted_pair_list = sorted(pair_list, key=lambda x: x[1])
 
-    cluster_scores = []
+        rep_dict[k] = deepcopy(sorted_pair_list)
 
-    def cluster_targets_and_refs(rep_dict, k):
-        
-        total_reps = rep_dict["targets"] + rep_dict["refs"]
-        n_targets = len(rep_dict["targets"])
-
-        M_reps = torch.stack(total_reps).squeeze(1)
-        M_reps_scaled = StandardScaler().fit_transform(M_reps)
-
-        cluster_labels = kmeans_model.fit_predict(M_reps_scaled)
-        
-        cluster_results_dict = {
-            "targets": {
-                "0": 0,
-                "1": 0,
-            },
-            "refs": {
-                "0": 0,
-                "1": 0,
-            }
-        }
-
-        for i, l in enumerate(cluster_labels):
-            if i < n_targets:
-                cluster_results_dict["targets"][str(int(l))] += 1
-            else:
-                cluster_results_dict["refs"][str(int(l))] += 1
-
-        n_targets_0, n_targets_1 = cluster_results_dict["targets"]["0"], cluster_results_dict["targets"]["1"]
-        n_refs_0, n_refs_1 = cluster_results_dict["refs"]["0"], cluster_results_dict["refs"]["1"]
-        t_c0_to_c1 = (n_targets_0 / n_targets_1) if n_targets_1 != 0 else 1.0
-        r_c0_to_c1 = (n_refs_0 / n_refs_1) if n_refs_1 != 0 else 1.0
-
-        if t_c0_to_c1 > r_c0_to_c1:
-            target_cluster_id = 0
-            ref_cluster_id = 1
-        else:
-            target_cluster_id = 1
-            ref_cluster_id = 0
-
-        score = cluster_score(target_cluster_id, cluster_results_dict)
-        cluster_scores.append(score)
-
-        target_cluster_mean = torch.zeros(total_reps[0].shape)
-        ref_cluster_mean = torch.zeros(total_reps[0].shape)
-
-        for i, l in enumerate(cluster_labels):
-            if i < n_targets and l == target_cluster_id:
-                target_cluster_mean += total_reps[i]
-            elif i >= n_targets and l == ref_cluster_id:
-                ref_cluster_mean += total_reps[i]
-
-        os.makedirs(save_path, exist_ok=True)
-        with open(os.path.join(save_path, f"layer_{k}_clusters.json"), "w") as f:
-            json.dump(cluster_results_dict, f, indent=3)
-
-        return (ref_cluster_mean, target_cluster_mean)
-    
-    ref_target_means = []
-    for k in range(len(model.model.layers)):
-        if plot:
-            view_refs_targets_2d(hidden_states_dict[k]["refs"], hidden_states_dict[k]["targets"], k)
-        ref_target_mean_k = cluster_targets_and_refs(hidden_states_dict[k], k)
-        ref_target_means.append(ref_target_mean_k)
-
-    return ref_target_means, cluster_scores
-
-def cluster_score(target_cluster_id, cluster_dict):
-    targets_in_c0 = cluster_dict["targets"]["0"]
-    targets_in_c1 = cluster_dict["targets"]["1"]
-
-    refs_in_c0 = cluster_dict["refs"]["0"]
-    refs_in_c1 = cluster_dict["refs"]["1"]
-
-    c0_population = targets_in_c0 + refs_in_c0
-    c1_population = targets_in_c1 + refs_in_c1
-
-    if target_cluster_id == 0:
-        c0_in = targets_in_c0
-        c1_in = refs_in_c1
-    else:
-        c0_in = refs_in_c0
-        c1_in = targets_in_c1
-
-    score = ((1/2) * (c0_in / c0_population + c1_in / c1_population))**2
-
-    return score
+    return rep_dict
 
 def get_adapted_lambda(h_icv, hidden_states_k, lam):
     h_icv_expanded = h_icv.squeeze(1).view(1, 1, -1)
@@ -198,221 +105,145 @@ def save_ax_as_png(ax, filename):
     fig.savefig(filename)
     plt.close(fig)
 
-def config_latent_hook(steering_vec, steering_strength, k, plt_obj=None, layer_k_mean=None, pcs=None):
+def config_latent_hook(icv, steering_strength):
     def latent_hook_k(module, input, output):
         hidden_states_k = output[0]
-        
-        adapted_lambdas = get_adapted_lambda(steering_vec, hidden_states_k, steering_strength)
-        new_hidden_states_k = torch.add(steering_vec.view(1, 1, -1) * adapted_lambdas.unsqueeze(-1), hidden_states_k)
+
+        adapted_lambdas = get_adapted_lambda(icv, hidden_states_k, steering_strength)
+        new_hidden_states_k = torch.add(icv.view(1, 1, -1) * adapted_lambdas.unsqueeze(-1), hidden_states_k)
 
         norm = torch.norm(hidden_states_k, p=2, dim=2, keepdim=True)
         new_norm = torch.norm(new_hidden_states_k, p=2, dim=2, keepdim=True)
 
         hidden_states_k = torch.mul(new_hidden_states_k, (norm / new_norm))
 
-        last_hidden_state_k = hidden_states_k[:, -1, :]
-
-        # t = hidden_states_k.shape[1]
-
-        # lhs_k_proj = down_proj_single_h(last_hidden_state_k.to("cpu"), layer_k_mean, pcs)
-
-        # plt_obj.scatter(lhs_k_proj[:, :, 0], lhs_k_proj[:, :, 1], color='r')
-        
-        # save_ax_as_png(plt_obj, f"layer_plots/layer_{k}_token_{t}.png")
-
         return (hidden_states_k,)
     
     return latent_hook_k
 
-def add_latent_hooks(model, rep_dict, steering_strength, pcs_list, ax):
+def config_steering(icv, steering_strength, model):
     for k, layer in enumerate(model.model.layers):
-        h_icv = unpaired_h_icv(rep_dict, k).to(device)
-        pcs_k, lkm = pcs_list[k]
-        hook_for_layer_k = config_latent_hook(h_icv, steering_strength, k, ax[k], lkm, pcs_k)
+
+        hook_for_layer_k = config_latent_hook(
+            icv[k].to(device),
+            steering_strength * (1.2)**(k+1)
+        )
 
         layer.register_forward_hook(hook_for_layer_k)
 
-def add_latent_hooks_by_mean(model, ref_target_means, cscores, steering_strength, pcs_list, ax):
-    for k, layer in enumerate(model.model.layers):
-        ref_mean_k, target_mean_k = ref_target_means[k]
-        h_icv = (target_mean_k - ref_mean_k).to(device)
-        pcs_k, lkm = pcs_list[k]
-        hook_for_layer_k = config_latent_hook(h_icv, steering_strength, k, ax[k], lkm, pcs_k)
+def add_model_steering():
+    pass
 
-        layer.register_forward_hook(hook_for_layer_k)
+# Property value based approach
+def icv_prop_grad(h, h_list_sorted, alpha, p_d, sample_rate=0.1):
+    p_hat = h_prop_pred(h, h_list_sorted, sample_rate)
+    p_dt = alpha * p_d + (1 - alpha) * p_hat
+    
+    p_dt_list = p_dt.tolist()
 
-def get_P_y(h_y_dot, h_x_sum):
+    ref_samples_lists = [torch.stack(closest_to_pdt(h_list_sorted, int(sample_rate * len(h_list_sorted)), pdt)) for pdt in p_dt_list]
 
-    P_y = h_y_dot / (h_y_dot + h_x_sum)
+    S_dt = torch.stack(ref_samples_lists).squeeze(2).to(device)
+    diff_mat = S_dt - h.unsqueeze(1)
 
-    return P_y
-
-def get_P_x(h_y_dot, h_x_dot, h_x_sum):
-
-    P_x = h_x_dot / (h_y_dot + h_x_sum)
-
-    return P_x
-
-def unpaired_h_icv(rep_dict, k):
-    target_reps = rep_dict[k]["targets"]
-    ref_reps = rep_dict[k]["refs"]
-
-    exp_ref_dot_list = []
-    good_ref_reps = []
-    for h_x in ref_reps:
-        try:
-            exp_h_x_dot = math.exp(torch.dot(h_x.squeeze(0), h_x.squeeze(0)))
-            exp_ref_dot_list.append(exp_h_x_dot)
-            good_ref_reps.append(h_x)
-        except:
-            continue
-
-    exp_target_dot_list = []
-    for h_y in target_reps:
-        exp_target_dot = math.exp(torch.dot(h_y.squeeze(0), h_y.squeeze(0)))
-        exp_target_dot_list.append(exp_target_dot)
-
-    ref_sum = sum(exp_ref_dot_list)
-
-    h_icv = sum([
-        (1.0 - get_P_y(t_rep_dot, ref_sum)) * t_rep - sum([
-            get_P_x(t_rep_dot, r_rep_dot, ref_sum) * r_rep for r_rep, r_rep_dot in zip(good_ref_reps, exp_ref_dot_list)
-        ])
-        for t_rep, t_rep_dot in zip(target_reps, exp_target_dot_list)
-    ])
+    h_icv = (alpha / len(ref_samples_lists)) * torch.sum(diff_mat, dim=1)
 
     return h_icv
 
-def add_model_steering(targets, refs, steering_strength, model, tokenizer, pcs_list, ax):
-    ref_target_means, cscores = all_layer_cluster_means(
-        targets,
-        refs,
-        model,
-        tokenizer
-    )
+def h_prop_pred(h, h_list_sorted, sample_rate=0.1):
 
-    add_latent_hooks_by_mean(
-        model,
-        ref_target_means,
-        cscores,
-        steering_strength,
-        pcs_list,
-        ax
-    )
-
-    # rep_dict = get_representation_dict(targets, refs, model, tokenizer)
-
-    # add_latent_hooks(
-    #     model,
-    #     rep_dict,
-    #     steering_strength,
-    #     pcs_list,
-    #     ax
-    # )
-
-# PCA FUNCTIONS FOR PLOTTING
-def pca(layer_k_data_list, N):
-    layer_k_data = torch.stack(layer_k_data_list)
-    mean_vector = layer_k_data.mean(dim=0, keepdim=True)
-
-    mean_0_data = layer_k_data - mean_vector
-    mean_0_data = mean_0_data.squeeze(1)
-
-    k_cov = torch.matmul(mean_0_data.T, mean_0_data) / (len(layer_k_data) - 1)
-    eigvals, eigvecs = torch.linalg.eigh(k_cov)
-
-    sorted_inds = torch.argsort(eigvals, descending=True)
-    sorted_eigvals = eigvals[sorted_inds]
-    sorted_eigvecs = eigvecs[:, sorted_inds]
-
-    return sorted_eigvals[:N], sorted_eigvecs[:N]
-
-def down_proj(layer_k_set_list, pcs):
-    layer_k_mat = torch.stack(layer_k_set_list)
-    layer_k_mean = layer_k_mat.mean(dim=0, keepdim=True)
-
-    proj = torch.matmul((layer_k_mat - layer_k_mean), pcs.T)
-
-    return proj, layer_k_mean
-
-def down_proj_single_h(h, layer_k_mean, pcs):
-    proj = torch.matmul((h - layer_k_mean), pcs.T)
-
-    return proj
-
-def view_refs_targets_2d(layer_k_ref_list, layer_k_target_list, layer, save_path="clusters"):
-    _, pcs = pca(layer_k_ref_list + layer_k_target_list, 2)
-
-    refs_proj = down_proj(layer_k_ref_list, pcs).squeeze(1).to("cpu")
-    targets_proj = down_proj(layer_k_target_list, pcs).squeeze(1).to("cpu")
-
-    plt.scatter(refs_proj[:, 0], refs_proj[:, 1], color='b')
-    plt.scatter(targets_proj[:, 0], targets_proj[:, 1], color='r')
-    plt.savefig(f"{save_path}/layer_{layer}_clusters.png")
-    plt.cla()
-
-def get_full_representation_dict(smiles, model, tokenizer):
-    rep_dict = {
-        k: [] for k in range(len(model.model.layers))
-    }
-
-    for smi in tqdm(smiles, desc="Getting target states"):
-        all_hidden_states = get_all_hidden_states(smi, model, tokenizer)
-        
-        for i, hs in enumerate(all_hidden_states):
-            rep_dict[i].append(hs)
-
-    return rep_dict
-
-def view_all_2d(layer_k_list, layer, prop_vals, ax, save_path="clusters"):
-    _, pcs = pca(layer_k_list, 2)
-
-    proj, lkm = down_proj(layer_k_list, pcs)
-    proj = proj.squeeze(1).to("cpu")
-
-    ax.scatter(proj[:, 0], proj[:, 1], c=prop_vals, cmap='viridis', vmin=min(prop_vals), vmax=max(prop_vals))
-
-    return (pcs, lkm)
-
-def full_dataset_layers(smiles, prop_vals, model, tokenizer, ax):
-    rep_dict = get_full_representation_dict(smiles, model, tokenizer)
-
-    pcs_list = []
-
-    for k in range(len(model.model.layers)):
-        pcs_list.append(view_all_2d(rep_dict[k], k, prop_vals, ax[k]))
-
-    return pcs_list
-
-# Property value based approach
-def icv_prop_grad(h, h_list, prop_list, alpha, p_d, sample_rate=0.2):
-    p_hat = h_prop_pred(h, h_list, prop_list, sample_rate)
-    p_dt = alpha * p_d + (1 - alpha) * p_hat
-    
-    samples = list(zip(h_list, prop_list))
-
-    ref_samples = nsmallest(int(len(samples) * sample_rate), samples, key=lambda x: abs(x[1] - p_dt))
-    S_dt = torch.stack([s[0] for s in ref_samples])
-
-    diff_mat = S_dt - h
-
-    h_icv = (alpha / len(ref_samples)) * torch.sum(diff_mat)
-
-    print(h_icv)
-
-def h_prop_pred(h, h_list, prop_list, sample_rate=0.2):
-
-    n_sample = int(len(h_list) * sample_rate)
-    samples = random.sample(list(zip(h_list, prop_list)), n_sample)
+    n_sample = int(len(h_list_sorted) * sample_rate)
+    samples = random.sample(h_list_sorted, n_sample)
 
     h_samples = [s[0] for s in samples]
-    p_samples = torch.tensor([s[1] for s in samples])
+    p_samples = torch.tensor([s[1] for s in samples]).to(device)
 
-    h_mat = torch.stack(h_samples)
+    h_mat = torch.stack(h_samples).to(device)
     
-    dist_mat = torch.norm(h_mat - h, p=2)
-    dist_sum = torch.sum(dist_mat)
+    dist_mat = torch.norm(h_mat - h, p=2, dim=2)
+    dist_sum = torch.sum(dist_mat, dim=0)
 
-    p_hat = (1 / dist_sum) * torch.sum(p_samples / dist_mat)
+    p_hat = (1 / dist_sum) * torch.sum(p_samples.view(-1, 1) / dist_mat)
 
     return p_hat
+
+def closest_to_pdt(sorted_layer_pairs, n, p_dt):
+    n_layer_pairs = len(sorted_layer_pairs)
+    left = 0
+    right = n_layer_pairs - 1
+
+    best_ind = 0
+    best_diff = float('inf')
+
+    while left <= right:
+        mid = (left + right) // 2
+        mid_val = sorted_layer_pairs[mid][1]
+        diff = abs(mid_val - p_dt)
+
+        if diff < best_diff:
+            best_diff = diff
+            best_ind = mid
+
+        if mid_val < p_dt:
+            left = mid + 1
+        elif mid_val > p_dt:
+            right = mid - 1
+        else:
+            best_ind = mid
+            break
+
+    n_closest = [sorted_layer_pairs[best_ind]]
+    right = best_ind + 1
+    left = best_ind - 1
+    while len(n_closest) < n:
+
+        remaining = n - len(n_closest)
+
+        if right > n_layer_pairs - 1:
+            n_closest += sorted_layer_pairs[best_ind - remaining:best_ind]
+            break
+        elif left < 0:
+            n_closest += sorted_layer_pairs[best_ind + 1:best_ind + remaining + 1]
+            break
+
+        right_diff = abs(p_dt - sorted_layer_pairs[right][1])
+        left_diff = abs(p_dt - sorted_layer_pairs[left][1])
+
+        if right_diff < left_diff:
+            n_closest.append(sorted_layer_pairs[right])
+            right += 1
+        else:
+            n_closest.append(sorted_layer_pairs[left])
+            left -= 1
+
+    n_closest_list = [nc[0] for nc in n_closest]
+
+    return n_closest_list
+
+# Pair based approach
+def pair_based_icv(smiles_pairs, model, tokenizer):
+    smiles_list = [x[0] for x in smiles_pairs]
+    smiles_list += [x[1] for x in smiles_pairs]
+
+    smiles_list = list(set(smiles_list))
+
+    rep_dict = get_representation_dict(smiles_list, model, tokenizer)
+
+    icv_list = [torch.zeros((1, model.config.hidden_size)) for k in range(len(model.model.layers))]
+
+    for pair in smiles_pairs:
+        smi1, smi2, pval = pair
+        for k in range(len(model.model.layers)):
+            smi1_layer_k = rep_dict[k][smi1]
+            smi2_layer_k = rep_dict[k][smi2]
+
+            diff_vec = smi1_layer_k - smi2_layer_k
+            diff_vec = -diff_vec if pval < 0 else diff_vec
+            
+            diff_vec = diff_vec / torch.norm(diff_vec, p=2)
+
+            icv_list[k] += diff_vec
+
+    icv_list = [icv / len(smiles_pairs) for icv in icv_list]
+
+    return icv_list

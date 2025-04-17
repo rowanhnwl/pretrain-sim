@@ -4,6 +4,8 @@ from src.utils import split_property_dataset, calc_tpsa
 
 from src.prop_pretraining.chemfm import LlamaForPropPred
 
+from preprocess import get_best_smiles_pairs
+
 import torch
 import json
 
@@ -13,12 +15,7 @@ device = ("cuda" if torch.cuda.is_available() else "cpu")
 
 def main():
     dataset_path = "data/props/tpsa.json"
-    
-    r_range = (40.0, 50.0)
-    t_range = (80.0, 90.0)
-
     steering_strength = 0.01
-
     with open(dataset_path, "r") as f:
         data_dict = json.load(f)
 
@@ -26,23 +23,23 @@ def main():
         model_path="checkpoints/full_model1"
     )
 
-    refs, targets = split_property_dataset(data_dict, t_range, r_range)
+    with open(dataset_path, "r") as f:
+        dataset = json.load(f)
 
-    fig, ax = plt.subplots(22, 1)
+    #smiles_pairs = get_best_smiles_pairs(dataset)
+    with open("smiles_pairs.json", "r") as f:
+        smiles_pairs = json.load(f)["pairs"]  
 
-    pcs_list = full_dataset_layers(list(data_dict.keys()), list(data_dict.values()), model, tokenizer, ax)
+    icv = pair_based_icv(smiles_pairs, model, tokenizer)
 
-    add_model_steering(targets, refs, steering_strength, model, tokenizer, pcs_list, ax)
+    config_steering(icv, steering_strength, model)
+    
     smiles = generate_smiles(
         "C",
-        100,
+        1,
         model,
         tokenizer,
     )
-
-    # for p, k in enumerate(plts_pcs):
-    #     plt_obj = p[0]
-    #     plt_obj.savefig(f"layer_{k}.png")
     
     tpsas = []
     s = []

@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader, random_split
 import torch.optim as optim
 
 def main():
-    model_path = "ChemFM/ChemFM-1B"
+    model_path = "ChemFM/ChemFM-3B"
     ckpt_path = "checkpoints/tpsa"
 
     n_samples = 100000
@@ -18,7 +18,7 @@ def main():
     zinc250k_smiles = load_zinc250k(prop="tpsa")
     os.makedirs(ckpt_path, exist_ok=True)
 
-    model = LlamaForPropPred(model_path=model_path)
+    model = LlamaForPropPred(model_path=model_path, hf_path=model_path, embed_dim=3072, lora=True)
 
     dataset = PropDataset(
         master_data_list=zinc250k_smiles,
@@ -41,7 +41,8 @@ def main():
         valid_dataloader=valid_dataloader,
         optimizer=optimizer,
         epochs=epochs,
-        ckpt_path=ckpt_path
+        ckpt_path=ckpt_path,
+        lora=True
     )
 
 if __name__ == "__main__":

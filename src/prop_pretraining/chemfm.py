@@ -1,4 +1,5 @@
 from transformers import AutoTokenizer, LlamaModel
+from peft import get_peft_model, LoraConfig
 
 import torch
 import torch.nn as nn
@@ -9,11 +10,23 @@ from tqdm import tqdm
 device = ("cuda" if torch.cuda.is_available() else "cpu")
 
 class LlamaForPropPred(nn.Module):
-    def __init__(self, model_path, hf_path="ChemFM/ChemFM-1B", embed_dim=2048):
+    def __init__(self, model_path, hf_path="ChemFM/ChemFM-1B", embed_dim=2048, lora=False):
         super().__init__()
 
         self.model = LlamaModel.from_pretrained(model_path)
         self.tokenizer = AutoTokenizer.from_pretrained(hf_path)
+
+        if lora:
+            lora_config = LoraConfig(
+                r=8,
+                lora_alpha=32,
+                bias="none"
+            )
+
+            base_model = LlamaModel.from_pretrained(model_path)
+            self.model = get_peft_model(base_model, lora_config)
+        else:
+            self.llama = LlamaModel.from_pretrained(model_path)
 
         self.tokenizer.add_special_tokens({
             'pad_token': '<pad>'
@@ -74,7 +87,7 @@ class LlamaForMultiPropPred(nn.Module):
 
         return pred
     
-def train_for_prop_pred(model, train_dataloader, valid_dataloader, optimizer, epochs, ckpt_path):
+def train_for_prop_pred(model, train_dataloader, valid_dataloader, optimizer, epochs, ckpt_path, lora=False):
 
     model.to(device)
     best_valid_loss = float("inf")
@@ -122,7 +135,11 @@ def train_for_prop_pred(model, train_dataloader, valid_dataloader, optimizer, ep
             best_valid_loss = mean_valid_loss
 
             print(f"Saving at {ckpt_path}")
-            model.model.save_pretrained(ckpt_path)
+            if lora:
+                merged = model.model.merge_and_unload()
+                merged.save_pretrained(ckpt_path)
+            else:
+                model.model.save_pretrained(ckpt_path)
 
 def train_for_multi_prop_pred(model, train_dataloader, valid_dataloader, optimizer, epochs, ckpt_path):
 

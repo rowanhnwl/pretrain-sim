@@ -15,7 +15,7 @@ def main():
     task_weights = (0.1, 0.9)
 
     base_model, tokenizer = load_llama_and_tokenizer_for_training(
-        model_path="checkpoints/tpsa"
+        model_path="checkpoints/tpsa_3b"
     )
 
     dataset = ZincSMILESWithTPSA(n=n, tokenizer=tokenizer)
