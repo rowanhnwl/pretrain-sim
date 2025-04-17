@@ -121,18 +121,25 @@ def config_latent_hook(icv, steering_strength):
     
     return latent_hook_k
 
-def config_steering(icv, steering_strength, model):
+def config_steering(icv, s_i, s_f, model):
+    L = len(model.model.layers)
     for k, layer in enumerate(model.model.layers):
+
+        ss = ss_update(s_i, s_f, k, L)
 
         hook_for_layer_k = config_latent_hook(
             icv[k].to(device),
-            steering_strength * (1.2)**(k+1)
+            ss
         )
 
         layer.register_forward_hook(hook_for_layer_k)
 
-def add_model_steering():
-    pass
+def ss_update(s_i, s_f, k, L):
+    
+    b = (1 / L) * math.log(s_f / s_i)
+    ss = s_i * math.exp(b * k)
+
+    return ss
 
 # Property value based approach
 def icv_prop_grad(h, h_list_sorted, alpha, p_d, sample_rate=0.1):
@@ -225,6 +232,8 @@ def pair_based_icv(smiles_pairs, model, tokenizer):
     smiles_list = [x[0] for x in smiles_pairs]
     smiles_list += [x[1] for x in smiles_pairs]
 
+    val_diffs = torch.tensor([x[2] for x in smiles_pairs])
+
     smiles_list = list(set(smiles_list))
 
     rep_dict = get_representation_dict(smiles_list, model, tokenizer)
@@ -233,16 +242,17 @@ def pair_based_icv(smiles_pairs, model, tokenizer):
 
     for pair in smiles_pairs:
         smi1, smi2, pval = pair
+
+        pval_adj = (pval - val_diffs.min()) / (val_diffs.max() - val_diffs.min())
+
         for k in range(len(model.model.layers)):
             smi1_layer_k = rep_dict[k][smi1]
             smi2_layer_k = rep_dict[k][smi2]
 
             diff_vec = smi1_layer_k - smi2_layer_k
-            diff_vec = -diff_vec if pval < 0 else diff_vec
-            
-            diff_vec = diff_vec / torch.norm(diff_vec, p=2)
+            alpha = (1) / torch.norm(diff_vec, p=2)
 
-            icv_list[k] += diff_vec
+            icv_list[k] += diff_vec * alpha
 
     icv_list = [icv / len(smiles_pairs) for icv in icv_list]
 

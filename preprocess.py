@@ -58,9 +58,9 @@ def get_best_smiles_pairs(dataset):
     smiles_pairs = get_all_smiles_pairs(smiles)
 
     # Only use some pairs for the sake of efficiency
-    sample_rate = 0.5
-    n_sample = int(sample_rate * len(smiles_pairs))
-    smiles_pairs = random.sample(smiles_pairs, n_sample)
+    # sample_rate = 0.999
+    # n_sample = int(sample_rate * len(smiles_pairs))
+    # smiles_pairs = random.sample(smiles_pairs, n_sample)
 
     # Split the pairs into lists for subprocessing
     n_cpu = os.cpu_count()
@@ -79,7 +79,10 @@ def get_best_smiles_pairs(dataset):
     for x in sim_list:
         pdiff = dataset[x[0]] - dataset[x[1]]
         if x[2] >= sim_thresh and pdiff != 0:
-            smiles_pairs.append((x[0], x[1], pdiff))
+            if pdiff > 0: # Greater prop val first
+                smiles_pairs.append((x[0], x[1], pdiff))
+            elif pdiff < 0:
+                smiles_pairs.append((x[1], x[0], -pdiff))
 
     print(f"{len(smiles_pairs)} total pairs")
 

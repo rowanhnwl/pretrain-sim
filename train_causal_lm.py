@@ -5,7 +5,7 @@ from src.generation.training import *
 from src.utils import split_train_valid
 
 def main():
-    model_path = "checkpoints/tpsa"
+    model_path = "ChemFM/ChemFM-1B"
     n = 250000
     valid_ratio = 0.15
     ckpt_steps = 5000
@@ -34,7 +34,8 @@ def main():
         valid_dataset=valid_dataset,
         ckpt_steps=ckpt_steps,
         epochs=epochs,
-        batch_size=batch_size
+        batch_size=batch_size,
+        lora=True
     )
 
 if __name__ == "__main__":

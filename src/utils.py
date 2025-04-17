@@ -4,6 +4,7 @@ import csv
 
 from rdkit import Chem
 from rdkit.Chem.rdMolDescriptors import CalcTPSA
+from rdkit.Chem.Crippen import MolLogP
 
 from datasets import Dataset
 
@@ -18,6 +19,16 @@ def calc_tpsa(smi):
         return None
 
     return tpsa
+
+def calc_xlogp(smi):
+    mol = Chem.MolFromSmiles(smi)
+
+    if mol is not None:
+        xlogp = MolLogP(mol)
+    else:
+        return None
+
+    return xlogp
 
 def load_zinc250k_all(path="data/zinc250k"):
     full_path = os.path.join(path, os.listdir(path)[0])
