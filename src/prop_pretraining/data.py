@@ -16,7 +16,7 @@ class PropDataset(Dataset):
         self.n_props = n_props
 
         self.smiles_prop_data = self.sample_and_tokenize()
-        self.standardize()
+        #self.standardize()
 
     def __len__(self):
         return len(self.smiles_prop_data)
@@ -25,12 +25,15 @@ class PropDataset(Dataset):
         return self.smiles_prop_data[index]
 
     def sample_and_tokenize(self):
-        sampled_smiles = random.sample(self.master_data_list, self.n_samples)
+        if self.n_samples < len(self.master_data_list):
+            sampled_smiles = random.sample(self.master_data_list, self.n_samples)
+        else:
+            sampled_smiles = self.master_data_list
 
         smiles_prop_data = []
         for sample in sampled_smiles:
             smi = sample[0]
-            props = list(sample[1:]) if self.n_props > 1 else sample[1]
+            props = list(sample[1:]) if self.n_props > 1 else [sample[1]]
 
             tokenized_smi = self.tokenize_smiles(smi)
 
@@ -48,21 +51,21 @@ class PropDataset(Dataset):
 
         return tokenized
     
-    def standardize(self):
-        prop_vals = []
-        for x in self.smiles_prop_data:
-            if self.n_props > 1:
-                prop_vals.append(x["prop"])
-            else:
-                prop_vals.append([x["prop"]])
+    # def standardize(self):
+    #     prop_vals = []
+    #     for x in self.smiles_prop_data:
+    #         if self.n_props > 1:
+    #             prop_vals.append(x["prop"])
+    #         else:
+    #             prop_vals.append([x["prop"]])
 
-        prop_vals = torch.tensor(prop_vals)
+    #     prop_vals = torch.tensor(prop_vals)
         
-        mu = prop_vals.mean(dim=0, keepdim=True)
-        sigma = prop_vals.std(dim=0, keepdim=True)
+    #     mu = prop_vals.mean(dim=0, keepdim=True)
+    #     sigma = prop_vals.std(dim=0, keepdim=True)
 
-        for x in self.smiles_prop_data:
-            x["prop"] = ((torch.tensor(x["prop"]) - mu) / sigma).tolist()
+    #     for x in self.smiles_prop_data:
+    #         x["prop"] = ((torch.tensor(x["prop"]) - mu) / sigma).tolist()
     
 def collate_batch(batch):
     smi_token_ids = []

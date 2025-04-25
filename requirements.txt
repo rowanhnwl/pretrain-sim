@@ -13,3 +13,4 @@ datasets
 accelerate
 peft
 seaborn
+chemprop

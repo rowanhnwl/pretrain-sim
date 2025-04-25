@@ -105,12 +105,14 @@ def save_ax_as_png(ax, filename):
     fig.savefig(filename)
     plt.close(fig)
 
-def config_latent_hook(icv, steering_strength):
+def config_latent_hook(icv):
     def latent_hook_k(module, input, output):
         hidden_states_k = output[0]
 
-        adapted_lambdas = get_adapted_lambda(icv, hidden_states_k, steering_strength)
-        new_hidden_states_k = torch.add(icv.view(1, 1, -1) * adapted_lambdas.unsqueeze(-1), hidden_states_k)
+        #adapted_lambdas = get_adapted_lambda(icv, hidden_states_k, steering_strength)
+        #new_hidden_states_k = torch.add(icv.view(1, 1, -1) * adapted_lambdas.unsqueeze(-1), hidden_states_k)
+
+        new_hidden_states_k = torch.add(icv.view(1, 1, -1), hidden_states_k)
 
         norm = torch.norm(hidden_states_k, p=2, dim=2, keepdim=True)
         new_norm = torch.norm(new_hidden_states_k, p=2, dim=2, keepdim=True)
@@ -121,25 +123,20 @@ def config_latent_hook(icv, steering_strength):
     
     return latent_hook_k
 
-def config_steering(icv, s_i, s_f, model):
-    L = len(model.model.layers)
+def config_steering(icv, model):
+
+    hook_handles = []
+
     for k, layer in enumerate(model.model.layers):
 
-        ss = ss_update(s_i, s_f, k, L)
-
         hook_for_layer_k = config_latent_hook(
-            icv[k].to(device),
-            ss
+            icv[k].to(device)
         )
 
-        layer.register_forward_hook(hook_for_layer_k)
+        handle = layer.register_forward_hook(hook_for_layer_k)
+        hook_handles.append(handle)
 
-def ss_update(s_i, s_f, k, L):
-    
-    b = (1 / L) * math.log(s_f / s_i)
-    ss = s_i * math.exp(b * k)
-
-    return ss
+    return hook_handles
 
 # Property value based approach
 def icv_prop_grad(h, h_list_sorted, alpha, p_d, sample_rate=0.1):
@@ -232,16 +229,17 @@ def pair_based_icv(smiles_pairs, model, tokenizer):
     smiles_list = [x[0] for x in smiles_pairs]
     smiles_list += [x[1] for x in smiles_pairs]
 
-    val_diffs = torch.tensor([x[2] for x in smiles_pairs])
+    val_diffs = torch.tensor([x[3] for x in smiles_pairs])
+    val_diff_sum = val_diffs.sum()
 
     smiles_list = list(set(smiles_list))
 
     rep_dict = get_representation_dict(smiles_list, model, tokenizer)
 
     icv_list = [torch.zeros((1, model.config.hidden_size)) for k in range(len(model.model.layers))]
-
+    
     for pair in smiles_pairs:
-        smi1, smi2, pval = pair
+        smi1, smi2, sim, pval = pair
 
         pval_adj = (pval - val_diffs.min()) / (val_diffs.max() - val_diffs.min())
 
@@ -249,10 +247,11 @@ def pair_based_icv(smiles_pairs, model, tokenizer):
             smi1_layer_k = rep_dict[k][smi1]
             smi2_layer_k = rep_dict[k][smi2]
 
-            diff_vec = smi1_layer_k - smi2_layer_k
-            alpha = (1) / torch.norm(diff_vec, p=2)
+            diff_vec = smi1_layer_k - smi2_layer_k # Targetting larger prop vals
+            #diffs.append(torch.norm(diff_vec, p=2))
+            alpha = 1 / torch.norm(diff_vec, p=2)
 
-            icv_list[k] += diff_vec * alpha
+            icv_list[k] += diff_vec #* ((1.0 - (pval / val_diff_sum))/(val_diffs.max()-val_diffs.min()))
 
     icv_list = [icv / len(smiles_pairs) for icv in icv_list]
 

@@ -1,6 +1,7 @@
 import pandas as pd
 import os
 import csv
+import json
 
 from rdkit import Chem
 from rdkit.Chem.rdMolDescriptors import CalcTPSA
@@ -69,6 +70,12 @@ def load_zinc250k(path="data/zinc250k", prop=None):
                 smiles.append((smi, tpsa))
 
     return smiles
+
+def load_prop_json(path):
+    with open(path, "r") as f:
+        data_dict = json.load(f)
+
+    return [(smi, pval) for (smi, pval) in data_dict.items()]
 
 def split_property_dataset(data_dict, t_range, r_range):
     min_target_val, max_target_val = t_range

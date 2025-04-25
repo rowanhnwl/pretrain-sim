@@ -38,7 +38,7 @@ def load_llama_and_tokenizer_for_training(
     return model.to(device), tokenizer
 
 def save_as_causal_lm(model, output_dir, lora):
-    base_model = model.llama
+    base_model = model.model
     lm_head = model.lm_head
 
     if lora:

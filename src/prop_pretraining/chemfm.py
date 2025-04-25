@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from tqdm import tqdm
+import os
+from copy import deepcopy
 
 device = ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -13,10 +15,10 @@ class LlamaForPropPred(nn.Module):
     def __init__(self, model_path, hf_path="ChemFM/ChemFM-1B", embed_dim=2048, lora=False):
         super().__init__()
 
-        self.model = LlamaModel.from_pretrained(model_path)
         self.tokenizer = AutoTokenizer.from_pretrained(hf_path)
+        self.embed_dim = embed_dim
 
-        if lora:
+        if lora and model_path is not None:
             lora_config = LoraConfig(
                 r=8,
                 lora_alpha=32,
@@ -25,15 +27,18 @@ class LlamaForPropPred(nn.Module):
 
             base_model = LlamaModel.from_pretrained(model_path)
             self.model = get_peft_model(base_model, lora_config)
-        else:
-            self.llama = LlamaModel.from_pretrained(model_path)
+        elif model_path is not None:
+            self.model = LlamaModel.from_pretrained(model_path)
 
-        self.tokenizer.add_special_tokens({
-            'pad_token': '<pad>'
-        })
-        self.model.config.pad_token_id = self.tokenizer.pad_token_id
-        self.model.resize_token_embeddings(len(self.tokenizer))
-        
+        if model_path is not None:
+            self.tokenizer.add_special_tokens({
+                'pad_token': '<pad>'
+            })
+            self.model.config.pad_token_id = self.tokenizer.pad_token_id
+            self.model.resize_token_embeddings(len(self.tokenizer))
+
+            print(f"Loaded from {model_path}")
+
         self.pred_nn = nn.Sequential(
             nn.Linear(embed_dim, embed_dim // 2),
             nn.ReLU(),
@@ -41,8 +46,6 @@ class LlamaForPropPred(nn.Module):
             nn.ReLU(),
             nn.Linear(embed_dim // 4, 1)
         )
-
-        print(f"Loaded from {model_path}")
 
     def forward(self, smi_input_ids, smi_attn_mask):
         batch_size = smi_input_ids.shape[0]
@@ -87,7 +90,7 @@ class LlamaForMultiPropPred(nn.Module):
 
         return pred
     
-def train_for_prop_pred(model, train_dataloader, valid_dataloader, optimizer, epochs, ckpt_path, lora=False):
+def train_for_prop_pred(model, train_dataloader, valid_dataloader, optimizer, epochs, ckpt_path, lora=False, save_full_model=False):
 
     model.to(device)
     best_valid_loss = float("inf")
@@ -105,7 +108,7 @@ def train_for_prop_pred(model, train_dataloader, valid_dataloader, optimizer, ep
                 smi_attn_mask=batch["smi_attn_mask"]
             )
 
-            loss = criterion(prop_pred, batch["prop"].squeeze(1).squeeze(1))
+            loss = criterion(prop_pred, batch["prop"].squeeze(1))
 
             optimizer.zero_grad()
             loss.backward()
@@ -124,7 +127,7 @@ def train_for_prop_pred(model, train_dataloader, valid_dataloader, optimizer, ep
                     smi_attn_mask=batch["smi_attn_mask"]
                 )
 
-                loss = criterion(prop_pred, batch["prop"].squeeze(1).squeeze(1))
+                loss = criterion(prop_pred, batch["prop"].squeeze(1))
 
                 valid_loss += loss.item()
         mean_valid_loss = valid_loss / len(valid_dataloader)
@@ -136,8 +139,21 @@ def train_for_prop_pred(model, train_dataloader, valid_dataloader, optimizer, ep
 
             print(f"Saving at {ckpt_path}")
             if lora:
-                merged = model.model.merge_and_unload()
-                merged.save_pretrained(ckpt_path)
+                if save_full_model:
+
+                    merged_wrapper = LlamaForPropPred(
+                        model_path=None,
+                        lora=False,
+                        embed_dim=model.embed_dim
+                    )
+
+                    merged_wrapper.model = model.model.merge_and_unload()
+                    merged_wrapper.pred_nn.load_state_dict(model.pred_nn.state_dict())
+
+                    torch.save(merged_wrapper.state_dict(), os.path.join(ckpt_path, "model.safetensors"))
+                else:
+                    merged = model.model.merge_and_unload()
+                    merged.save_pretrained(ckpt_path)
             else:
                 model.model.save_pretrained(ckpt_path)
 

@@ -50,18 +50,18 @@ def isolate_lm_grad(model: LlamaForCausalLM):
     for param in model.lm_head.parameters():
         param.requires_grad = True
 
-def generate_smiles(input, n_samples, model, tokenizer, max_len=256):
+def generate_smiles(input, n_samples, model, tokenizer, max_len=512):
     smiles_tokenized = tokenizer(input, return_tensors="pt").to(model.device)
     del smiles_tokenized["token_type_ids"]
-
+    model.eval()
     with torch.no_grad():
         outputs = model.generate(
             input_ids=smiles_tokenized["input_ids"],
             attention_mask=smiles_tokenized["attention_mask"],
             do_sample=True,
-            top_k=30,
-            top_p=0.95,
-            temperature=0.7,
+            top_k=0,
+            top_p=1.0,
+            temperature=0.45,
             num_return_sequences=n_samples,
             eos_token_id=tokenizer.eos_token_id,
             max_length=max_len,

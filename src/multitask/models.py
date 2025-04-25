@@ -19,9 +19,9 @@ class LlamaMultitask(PreTrainedModel):
                 bias="none"
             )
 
-            self.llama = get_peft_model(base_model, lora_config)
+            self.model = get_peft_model(base_model, lora_config)
         else:
-            self.llama = base_model
+            self.model = base_model
         
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.property_head = nn.Sequential(
