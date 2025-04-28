@@ -5,7 +5,7 @@ from src.generation.eval import eval_prop
 
 from src.prop_pretraining.chemfm import LlamaForPropPred
 
-from preprocess import get_best_smiles_pairs
+from src.preprocess import get_best_smiles_pairs
 
 from tqdm import tqdm
 import torch
@@ -33,30 +33,24 @@ path_dict = {
     "caco2_permeability": {
         "dataset": "data/props/caco2_permeability.json",
         "pairs": "data/pairs/caco2_permeability_smiles_pairs.json"
+    },
+    "solubility": {
+        "dataset": "data/props/solubility.json",
+        "pairs": "data/pairs/solubility_smiles_pairs.json"
     }
 }
 
-def generate_guided_molecules(props, n, model, tokenizer, output_path, build_pairs=False):
+def generate_guided_molecules(props, n, model, tokenizer, output_path):
     
     prop_icvs = []
     
     for prop, strength in props:
-        dataset_path = path_dict[prop]["dataset"]
         pairs_path = path_dict[prop]["pairs"]
-
-        if build_pairs:
-
-            with open(dataset_path, "r") as f:
-                dataset = json.load(f)
-
-            smiles_pairs = get_best_smiles_pairs(dataset)
-            with open(pairs_path, "w") as f:
-                json.dump({"pairs": smiles_pairs}, f, indent=3)
 
         with open(pairs_path, "r") as f:
             smiles_pairs = json.load(f)["pairs"]
 
-        icv = pair_based_icv(smiles_pairs, model, tokenizer)
+        icv = pair_based_icv(smiles_pairs, model, tokenizer, n_clusters=5)
         icv = [i * strength for i in icv]
         prop_icvs.append(icv)
 
@@ -84,9 +78,14 @@ def generate_guided_molecules(props, n, model, tokenizer, output_path, build_pai
     out_dict = {}
     vals = {}
     for prop, strength in props:
+
+        with open(path_dict[prop]["dataset"], "r") as f:
+            dataset_vals = list(json.load(f).values())
+        dataset_min, dataset_max = min(dataset_vals), max(dataset_vals)
+
         eval_dict = eval_prop(smiles, prop)
         out_dict[prop] = eval_dict
-        vals[prop] = list(eval_dict.values())
+        vals[prop] = [x for x in list(eval_dict.values()) if x >= dataset_min and x <= dataset_max]
 
     os.makedirs(output_path, exist_ok=True)
     with open(os.path.join(output_path, "molecules.json"), "w") as f:
@@ -103,18 +102,17 @@ def generate_guided_molecules(props, n, model, tokenizer, output_path, build_pai
 def main():
 
     props = [
-        ("caco2_permeability", -0.6),
-        ("tpsa", 0.3)
+        ("tpsa", 0.5)
     ]
 
     n = 50
 
     model, tokenizer = load_causal_lm_and_tokenizer(
-        model_path="output/final",
+        model_path="checkpoints/final",
         hf_path="ChemFM/ChemFM-3B"
     )
 
-    generate_guided_molecules(props, n, model, tokenizer, output_path="molecules/caco2_permeability_low_tpsa_high")
+    generate_guided_molecules(props, n, model, tokenizer, output_path="molecules/solubility")
 
 if __name__ == "__main__":
     main()

@@ -16,7 +16,7 @@ class ZincSMILESDataset(Dataset):
         self.tokenizer=tokenizer
 
         self.data = []
-        self.load_from_lmdb()
+        self.load_from_json()
 
     def __len__(self):
         return len(self.data)

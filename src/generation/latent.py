@@ -13,6 +13,9 @@ from copy import deepcopy
 import math
 import random
 from heapq import nsmallest
+from collections import Counter
+
+from tsnecuda import TSNE
 
 device = ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -39,6 +42,7 @@ def get_all_hidden_states(smiles, model, tokenizer):
     del smiles_tokenized["token_type_ids"]
     cat_for_eos(smiles_tokenized)
 
+    model.eval()
     with torch.no_grad():
         fwd_pass = model.model(**smiles_tokenized, output_hidden_states=True)
 
@@ -225,12 +229,9 @@ def closest_to_pdt(sorted_layer_pairs, n, p_dt):
     return n_closest_list
 
 # Pair based approach
-def pair_based_icv(smiles_pairs, model, tokenizer):
+def pair_based_icv(smiles_pairs, model, tokenizer, n_clusters=2):
     smiles_list = [x[0] for x in smiles_pairs]
     smiles_list += [x[1] for x in smiles_pairs]
-
-    val_diffs = torch.tensor([x[3] for x in smiles_pairs])
-    val_diff_sum = val_diffs.sum()
 
     smiles_list = list(set(smiles_list))
 
@@ -238,21 +239,36 @@ def pair_based_icv(smiles_pairs, model, tokenizer):
 
     icv_list = [torch.zeros((1, model.config.hidden_size)) for k in range(len(model.model.layers))]
     
+    all_diffs = []
+    L = len(model.model.layers)
     for pair in smiles_pairs:
         smi1, smi2, sim, pval = pair
 
-        pval_adj = (pval - val_diffs.min()) / (val_diffs.max() - val_diffs.min())
-
-        for k in range(len(model.model.layers)):
+        diffs = []
+        for k in range(L):
             smi1_layer_k = rep_dict[k][smi1]
             smi2_layer_k = rep_dict[k][smi2]
 
             diff_vec = smi1_layer_k - smi2_layer_k # Targetting larger prop vals
-            #diffs.append(torch.norm(diff_vec, p=2))
-            alpha = 1 / torch.norm(diff_vec, p=2)
+            
+            diffs.append(diff_vec.squeeze(0))
 
-            icv_list[k] += diff_vec #* ((1.0 - (pval / val_diff_sum))/(val_diffs.max()-val_diffs.min()))
+        all_diffs.append(diffs)
 
-    icv_list = [icv / len(smiles_pairs) for icv in icv_list]
+    layer_L_diffs = torch.stack([x[L - 1] for x in all_diffs])
+    kmeans = KMeans(n_clusters=n_clusters, random_state=0, n_init="auto").fit(layer_L_diffs)
 
-    return icv_list
+    cluster_labels = kmeans.labels_
+
+    cluster_icvs = [icv_list.copy()] * n_clusters
+    for cluster, vecs in zip(cluster_labels, all_diffs):
+
+        for i, v in enumerate(vecs):
+            cluster_icvs[cluster][i] += v
+
+    cluster_freqs = dict(Counter(cluster_labels))
+    for c in range(n_clusters):
+        for k in range(len(cluster_icvs[c])):
+            cluster_icvs[c][k] /= cluster_freqs[c]
+
+    return cluster_icvs[0]

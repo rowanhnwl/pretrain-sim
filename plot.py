@@ -11,8 +11,12 @@ def get_dataframe(prop_dict):
 
     return df, props
 
-p1 = "molecules/tpsa_high_xlogp_high/molecules.json"
-p2 = "molecules/tpsa_low_xlogp_low/molecules.json"
+p1 = "molecules/solubility_and_tpsa_low/molecules.json"
+p2 = "molecules/solubility_and_tpsa_high/molecules.json"
+
+dataset_path = "data/props/tpsa.json"
+
+joint = True
 
 with open(p1, "r") as f:
     p1_dict = json.load(f)
@@ -20,10 +24,27 @@ with open(p1, "r") as f:
 with open(p2, "r") as f:
     p2_dict = json.load(f)
 
-df1, props1 = get_dataframe(p1_dict)
-df2, props2 = get_dataframe(p2_dict)
+with open(dataset_path, "r") as f:
+    data_dict = json.load(f)
 
-sns.kdeplot(data=df1, x=props1[0], y=props1[1], color="r", alpha=0.75, bw_adjust=0.75)
-sns.kdeplot(data=df2, x=props2[0], y=props2[1], color="b", alpha=0.75, bw_adjust=0.75)
+if joint:
+    df1, props1 = get_dataframe(p1_dict)
+    df2, props2 = get_dataframe(p2_dict)
+
+    sns.kdeplot(data=df1, x=props1[0], y=props1[1], color="r", alpha=0.75, bw_adjust=0.75)
+    sns.kdeplot(data=df2, x=props2[0], y=props2[1], color="b", alpha=0.75, bw_adjust=0.75)
+else:
+    p1_vals = list(p1_dict["tpsa"].values())
+    p2_vals = list(p2_dict.values())
+    data_vals = list(data_dict.values())
+
+    max_val = max(data_vals)
+    min_val = min(data_vals)
+
+    p1_vals = [p for p in p1_vals if p >= min_val and p <= max_val]
+
+    sns.kdeplot(p1_vals, color="b")
+    #sns.kdeplot(p2_vals, color="r")
+    sns.kdeplot(data_vals, color="g")
 
 plt.savefig("double.png")

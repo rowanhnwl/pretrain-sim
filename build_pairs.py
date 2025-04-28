@@ -1,12 +1,20 @@
 import json
-from preprocess import get_best_smiles_pairs
+from src.preprocess import get_best_smiles_pairs_latent
+from src.generation.causal import load_causal_lm_and_tokenizer
 
-dataset_path = "data/props/caco2_permeability.json"
-pairs_path = "data/pairs/caco2_permeability_smiles_pairs.json"
+dataset_path = "data/props/tpsa.json"
+pairs_path = "data/pairs/tpsa_smiles_pairs.json"
 
 with open(dataset_path, "r") as f:
                 dataset = json.load(f)
 
-smiles_pairs = get_best_smiles_pairs(dataset, sample_rate=1.0, sim_thresh=0.97)
+model, tokenizer = load_causal_lm_and_tokenizer(
+        model_path="checkpoints/final",
+        hf_path="ChemFM/ChemFM-3B"
+    )
+
+n_pairs = 500
+sample_rate = 1.0
+smiles_pairs = get_best_smiles_pairs_latent(dataset, sample_rate, n_pairs, model, tokenizer)
 with open(pairs_path, "w") as f:
     json.dump({"pairs": smiles_pairs}, f, indent=3)

@@ -9,8 +9,8 @@ def main():
     n = 250000
     valid_ratio = 0.15
     ckpt_steps = 5000
-    epochs = 3
-    batch_size = 16
+    epochs = 1
+    batch_size = 8
 
     model, tokenizer = load_causal_lm_and_tokenizer(
         model_path=model_path,
@@ -20,7 +20,7 @@ def main():
 
     dataset = ZincSMILESDataset(
         n=n,
-        path="data/training/train_data.lmdb",
+        path="data/props/solubility.json",
         tokenizer=tokenizer
     )
 

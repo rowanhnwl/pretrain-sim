@@ -16,7 +16,7 @@ prop_to_model_dict = {
     "caco2_permeability": "checkpoints/eval/caco2_permeability/model_0/best.pt",
     "acute_toxicity": "PATH",
     "lipophilicity": "PATH",
-    "solubility": "PATH"
+    "solubility": "checkpoints/eval/solubility/model_0/best.pt"
 }
 
 def write_csv_data(data, path):
