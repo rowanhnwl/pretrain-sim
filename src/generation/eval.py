@@ -1,55 +1,99 @@
 from rdkit import Chem
 from rdkit.Chem import rdMolDescriptors, Descriptors
+from rdkit.Chem import AllChem, DataStructs
 
 from src.prop_pretraining.chemfm import LlamaForPropPred
 
 import torch
 import os
-import shutil
-import csv
-import subprocess
+from math import ceil
+from multiprocessing import Pool, Manager
 import pandas as pd
+import json
 
+manager = Manager()
 device = ("cuda" if torch.cuda.is_available() else "cpu")
 
-prop_to_model_dict = {
-    "caco2_permeability": "checkpoints/eval/caco2_permeability/model_0/best.pt",
-    "acute_toxicity": "PATH",
-    "lipophilicity": "PATH",
-    "solubility": "checkpoints/eval/solubility/model_0/best.pt"
+prop_to_dataset_dict = {
+    "caco2_permeability": "data/props/caco2_permeability.json",
+    "acute_toxicity": "data/props/acute_toxicity.json",
+    "lipophilicity": "data/props/lipophilicity.json",
+    "solubility": "data/props/solubility.json"
 }
 
-def write_csv_data(data, path):
+fpgen = AllChem.GetRDKitFPGenerator()
 
-    with open(path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerows(data)
+def tanimoto_similarity(smi1, smi2):
 
-def infer_prop_vals(smiles, model_path):
+    try:
+        mol1 = Chem.MolFromSmiles(smi1)
+        mol2 = Chem.MolFromSmiles(smi2)
+    except:
+        return None
 
-    os.makedirs("tmp", exist_ok=True)
+    if mol1 is None or mol2 is None:
+        return None
 
-    smiles_csv_format = [[smi] for smi in smiles if Chem.MolFromSmiles(smi) is not None]
-    csv_data = [["SMILES"]] + smiles_csv_format
-    gen_path = "tmp/gen_smiles.csv"
-    out_path = "tmp/preds.csv"
+    # Get fingerprints
+    fp1 = fpgen.GetFingerprint(mol1)
+    fp2 = fpgen.GetFingerprint(mol2)
 
-    write_csv_data(csv_data, gen_path)
+    tanimoto = DataStructs.TanimotoSimilarity(fp1, fp2)
 
-    subprocess.run(
-        f"  chemprop predict \
-            --test-path \"{gen_path}\" \
-            --model-path \"{model_path}\" \
-            --preds-path \"{out_path}\"",
-        shell=True
-    )
+    return tanimoto
 
-    df = pd.read_csv(out_path)
-    pred_vals = list(df[df.columns[1]])
+def split_to_sublists(master_list, n_splits):
+    pairs_per_split = ceil(float(len(master_list)) / n_splits)
+    splits_list = []
 
-    shutil.rmtree("tmp")
+    for n in range(n_splits):
 
-    smiles_metrics_dict = {smi[0]: val for (smi, val) in zip(smiles_csv_format, pred_vals)}
+        start_ind = n * pairs_per_split
+        end_ind = (n + 1) * pairs_per_split if n != n_splits - 1 else len(master_list)
+
+        splits_list.append(master_list[start_ind:end_ind])
+
+    assert sum([len(sl) for sl in splits_list]) == len(master_list), "Split for multiprocessing didn't work"
+
+    return splits_list
+
+def structure_inference_proc(args):
+
+    (smiles, data_dict, shared_results_dict) = args
+
+    dataset_smiles = list(data_dict.keys())
+
+    for smi in smiles:
+        sims = []
+        vals = []
+        for d_smi in dataset_smiles:
+            sim_score = tanimoto_similarity(d_smi, smi)
+
+            if sim_score is not None:
+                sims.append(sim_score)
+                vals.append(data_dict[d_smi])
+
+        sims_squared_sum = sum([s**2 for s in sims])
+        sims_normed = [s**2 / sims_squared_sum for s in sims]
+
+        est_val = sum([x * y for (x, y) in zip(vals, sims_normed)])
+
+        shared_results_dict[smi] = est_val
+
+def structure_inference(smiles, dataset_path):
+    with open(dataset_path, "r") as f:
+        data_dict = json.load(f)
+    
+    n_cpu = os.cpu_count()
+    smiles_splits = split_to_sublists(smiles, n_cpu)
+
+    with Pool(n_cpu) as p:
+        shared_results_dict = manager.dict()
+        args_list = [(smiles_split, data_dict, shared_results_dict) for smiles_split in smiles_splits]
+
+        p.map(structure_inference_proc, args_list)
+
+    smiles_metrics_dict = dict(shared_results_dict)
 
     return smiles_metrics_dict
 
@@ -67,16 +111,18 @@ def calc_prop_vals(smiles, prop):
                 val = rdMolDescriptors.CalcTPSA(mol)
             elif prop == "xlogp":
                 val, mr = rdMolDescriptors.CalcCrippenDescriptors(mol)
+            elif prop == "rotatable_bond_count":
+                val = rdMolDescriptors.CalcNumRotatableBonds(mol)
 
             smiles_metrics_dict[smi] = val
 
     return smiles_metrics_dict
 
 def eval_prop(smiles, prop):
-    if prop in prop_to_model_dict.keys():
-        model_path = prop_to_model_dict[prop]
+    if prop in prop_to_dataset_dict.keys():
+        dataset_path = prop_to_dataset_dict[prop]
 
-        prop_dict = infer_prop_vals(smiles, model_path)
+        prop_dict = structure_inference(smiles, dataset_path)
 
     else:
         prop_dict = calc_prop_vals(smiles, prop)

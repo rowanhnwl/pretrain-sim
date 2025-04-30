@@ -5,6 +5,7 @@ from tqdm import tqdm
 from matplotlib import pyplot as plt
 import os
 import json
+import pickle
 
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
@@ -229,13 +230,17 @@ def closest_to_pdt(sorted_layer_pairs, n, p_dt):
     return n_closest_list
 
 # Pair based approach
-def pair_based_icv(smiles_pairs, model, tokenizer, n_clusters=2):
+def pair_based_icv(smiles_pairs, model, tokenizer, n_clusters=2, states_path=None):
     smiles_list = [x[0] for x in smiles_pairs]
     smiles_list += [x[1] for x in smiles_pairs]
 
     smiles_list = list(set(smiles_list))
 
-    rep_dict = get_representation_dict(smiles_list, model, tokenizer)
+    if states_path is not None:
+        with open(states_path, "rb") as f:
+            rep_dict = pickle.load(f)
+    else:
+        rep_dict = get_representation_dict(smiles_list, model, tokenizer)
 
     icv_list = [torch.zeros((1, model.config.hidden_size)) for k in range(len(model.model.layers))]
     
@@ -249,16 +254,21 @@ def pair_based_icv(smiles_pairs, model, tokenizer, n_clusters=2):
             smi1_layer_k = rep_dict[k][smi1]
             smi2_layer_k = rep_dict[k][smi2]
 
-            diff_vec = smi1_layer_k - smi2_layer_k # Targetting larger prop vals
+            diff_vec = (smi1_layer_k - smi2_layer_k) # Targetting larger prop vals
             
             diffs.append(diff_vec.squeeze(0))
 
         all_diffs.append(diffs)
 
-    layer_L_diffs = torch.stack([x[L - 1] for x in all_diffs])
-    kmeans = KMeans(n_clusters=n_clusters, random_state=0, n_init="auto").fit(layer_L_diffs)
-
+    layer_L_diffs = torch.stack([(x[L - 1] / torch.norm(x[L - 1], p=2)) for x in all_diffs])
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42).fit(layer_L_diffs)
+    print("Done clustering")
     cluster_labels = kmeans.labels_
+
+    layer_L_clusters = [[] for n in range(n_clusters)]
+    for vec, c in zip(layer_L_diffs.tolist(), cluster_labels):
+        vec_t = torch.tensor(vec)
+        layer_L_clusters[c].append(vec_t)
 
     cluster_icvs = [icv_list.copy()] * n_clusters
     for cluster, vecs in zip(cluster_labels, all_diffs):
@@ -271,4 +281,46 @@ def pair_based_icv(smiles_pairs, model, tokenizer, n_clusters=2):
         for k in range(len(cluster_icvs[c])):
             cluster_icvs[c][k] /= cluster_freqs[c]
 
-    return cluster_icvs[0]
+    best_ind = get_best_cluster_simple(layer_L_clusters)
+
+    return cluster_icvs[best_ind]
+
+def get_best_cluster(L_clusters):
+
+    c_scores = []
+
+    for c in L_clusters:
+        c_mat = torch.stack(c)
+        c_mat_norms = torch.norm(c_mat, p=2, dim=1).unsqueeze(1)
+
+        c_mat_normed = c_mat / c_mat_norms
+
+        c_mat_normed_mean = torch.sum(c_mat_normed, dim=0) / len(c)
+
+        score = torch.norm(c_mat_normed_mean, p=2)
+        c_scores.append(score)
+
+    ind = torch.argmax(torch.tensor(c_scores)).item()
+    
+    print(c_scores[ind], len(L_clusters[ind]))
+
+    return ind
+
+def get_best_cluster_simple(L_clusters):
+
+    c_scores = []
+
+    for c in L_clusters:
+        c_mat = torch.stack(c)
+        c_mean = c_mat.mean(dim=0)
+
+        mean_dist_to_cmean = torch.norm(c_mat - c_mean, p=2, dim=1).mean()
+
+        c_scores.append(mean_dist_to_cmean)
+
+    ind = torch.argmin(torch.tensor(c_scores)).item()
+    
+    cpop = len(L_clusters[ind])
+    print(f"Cluster population: {cpop}")
+
+    return ind
