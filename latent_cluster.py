@@ -55,6 +55,11 @@ path_dict = {
         "dataset": "data/props/rotatable_bond_count.json",
         "pairs": "data/pairs/rotatable_bond_count_smiles_pairs.json",
         "states": "data/states/rotatable_bond_count_states.pickle"
+    },
+    "qed": {
+        "dataset": "data/props/qed.json",
+        "pairs": "data/pairs/qed_smiles_pairs.json",
+        "states": "data/states/qed_states.pickle"
     }
 }
 
@@ -85,7 +90,7 @@ def generate_guided_molecules(props, n, n_clusters, model, tokenizer, output_pat
     handles = config_steering(summed_icv, model)
 
     smiles = []
-    for _ in tqdm(range(n)):
+    for _ in range(n):
         smiles += generate_smiles(
             "C",
             1,
@@ -95,7 +100,10 @@ def generate_guided_molecules(props, n, n_clusters, model, tokenizer, output_pat
     
     for handle in handles:
         handle.remove()
-    del model
+
+    gen_last_states_dict = {}
+    for smi in smiles:
+        gen_last_states_dict[smi] = get_all_hidden_states(smi, model, tokenizer)[-1]
 
     out_dict = {}
     vals = {}
@@ -105,7 +113,7 @@ def generate_guided_molecules(props, n, n_clusters, model, tokenizer, output_pat
             dataset_vals = list(json.load(f).values())
         dataset_min, dataset_max = min(dataset_vals), max(dataset_vals)
 
-        eval_dict = eval_prop(smiles, prop)
+        eval_dict = eval_prop(smiles, prop, gen_last_states_dict, states_path)
         out_dict[prop] = eval_dict
         vals[prop] = [x for x in list(eval_dict.values()) if x >= dataset_min and x <= dataset_max]
 
@@ -124,11 +132,11 @@ def generate_guided_molecules(props, n, n_clusters, model, tokenizer, output_pat
 
 def grid_search_single():
     props_list = [
-        "caco2_permeability"
+        "qed"
     ]
 
-    ss_list = [-0.1, -0.2, -0.3, -0.5, -0.7, 0.1, 0.2, 0.3, 0.5, 0.7]
-    clusters_list = [5, 10, 15, 25, 50, 75]
+    ss_list = [-0.05, -0.1, -0.3, -0.5, -0.7, 0.05, 0.1, 0.3, 0.5, 0.7]
+    clusters_list = [5, 10, 25, 50, 75, 100]
 
     configs = product(
         props_list,
@@ -141,7 +149,7 @@ def grid_search_single():
         hf_path="ChemFM/ChemFM-3B"
     )
 
-    n = 250
+    n = 100
 
     for (prop, ss, n_clusters) in tqdm(configs):
         outpath = f"molecules/{prop}_{ss}_{n_clusters}"
@@ -201,21 +209,21 @@ def grid_search_dual():
 
 def main():
 
-    # grid_search_single()
+   #grid_search_single()
 
     props = [
-        ("solubility", 0.7)
+        ("tpsa", 0.2)
     ]
 
-    n = 10
+    n = 50
     n_clusters = 10
 
     model, tokenizer = load_causal_lm_and_tokenizer(
-        model_path="checkpoints/final",
+        model_path="checkpoints/zinc",
         hf_path="ChemFM/ChemFM-3B"
     )
 
-    generate_guided_molecules(props, n, n_clusters, model, tokenizer, output_path="molecules/solubility_high")
+    generate_guided_molecules(props, n, n_clusters, model, tokenizer, output_path="molecules/tpsa_high")
 
 if __name__ == "__main__":
     main()

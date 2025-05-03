@@ -12,8 +12,8 @@ def get_dataframe(prop_dict):
 
     return df, props
 
-p1 = "molecules/tpsa_0.1_100/molecules.json"
-p2 = "molecules/tpsa_-0.1_100/molecules.json"
+p1 = "molecules/tpsa_high/molecules.json"
+p2 = "molecules/tpsa_low/molecules.json"
 
 dataset_path = "data/props/tpsa.json"
 
@@ -57,8 +57,8 @@ else:
     p_val = ttest_ind(p1_vals, p2_vals)
     print(p_val)
 
-    sns.kdeplot(p1_vals, color="b", bw_adjust=0.4)
-    sns.kdeplot(p2_vals, color="r", bw_adjust=0.4)
+    sns.kdeplot(p1_vals, color="b")
+    sns.kdeplot(p2_vals, color="r")
     #sns.kdeplot(data_vals, color="g")
 
 plt.savefig("double.png")

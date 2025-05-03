@@ -5,22 +5,22 @@ from src.generation.training import *
 from src.utils import split_train_valid
 
 def main():
-    model_path = "ChemFM/ChemFM-3B"
+    model_path = "checkpoints/final"
     n = 250000
     valid_ratio = 0.15
     ckpt_steps = 5000
-    epochs = 1
-    batch_size = 8
+    epochs = 3
+    batch_size = 4
 
     model, tokenizer = load_causal_lm_and_tokenizer(
         model_path=model_path,
-        hf_path=model_path,
+        hf_path="ChemFM/ChemFM-3B",
         train_lora=True
     )
 
     dataset = ZincSMILESDataset(
         n=n,
-        path="data/props/solubility.json",
+        path="data/props/tpsa.json",
         tokenizer=tokenizer
     )
 

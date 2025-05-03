@@ -260,30 +260,37 @@ def pair_based_icv(smiles_pairs, model, tokenizer, n_clusters=2, states_path=Non
 
         all_diffs.append(diffs)
 
-    layer_L_diffs = torch.stack([(x[L - 1] / torch.norm(x[L - 1], p=2)) for x in all_diffs])
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42).fit(layer_L_diffs)
+    layer_L_diffs = torch.stack([x[L - 1] for x in all_diffs])
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42).fit(layer_L_diffs) # Cluster the last layer states
     print("Done clustering")
     cluster_labels = kmeans.labels_
 
     layer_L_clusters = [[] for n in range(n_clusters)]
     for vec, c in zip(layer_L_diffs.tolist(), cluster_labels):
         vec_t = torch.tensor(vec)
-        layer_L_clusters[c].append(vec_t)
+        layer_L_clusters[c].append(vec_t) # Sort the last layer states into their clusters
 
-    cluster_icvs = [icv_list.copy()] * n_clusters
-    for cluster, vecs in zip(cluster_labels, all_diffs):
+    best_ind = get_best_cluster(layer_L_clusters)
 
-        for i, v in enumerate(vecs):
-            cluster_icvs[cluster][i] += v
+    best_cluster_states_by_layer = [[] for _ in range(L)]
+    for cluster, vec in zip(cluster_labels, all_diffs):
+        if cluster == best_ind:
+            for i, v in enumerate(vec):
+                best_cluster_states_by_layer[i].append(v)
 
-    cluster_freqs = dict(Counter(cluster_labels))
-    for c in range(n_clusters):
-        for k in range(len(cluster_icvs[c])):
-            cluster_icvs[c][k] /= cluster_freqs[c]
+    icvs = []
+    for layer_list in best_cluster_states_by_layer:
+        layer_k_pc = pca(layer_list)
 
-    best_ind = get_best_cluster_simple(layer_L_clusters)
+        icvs.append(layer_k_pc)
 
-    return cluster_icvs[best_ind]
+    return icvs
+
+def pca(layer_k_list):
+    layer_k_mat = torch.stack(layer_k_list)
+    layer_k_mean = layer_k_mat.mean(dim=0)
+
+    return layer_k_mean
 
 def get_best_cluster(L_clusters):
 
